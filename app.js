@@ -8,7 +8,7 @@ const FILE_NAME       = "AlCaralloConLosTickets.csv";
 // Estos son los nombres de columna (etiquetas de combos y tabla), en el orden del fichero.
 const BASE_HEADER = [
   "BANCO", "FECHA CARGO", "FECHA GASTO", "COMERCIO", "DETALLE",
-  "SINO", "€", "CATEGORIA", "NPI", "MONEDA", "VALOR MONEDA", "VALOR ORIGINAL",
+  "SINO", "€", "CATEGORIA", "COMENTARIO", "MONEDA", "VALOR MONEDA", "VALOR ORIGINAL",
   "FECHA", "FICHERO"
 ];
 
@@ -17,7 +17,7 @@ const HIDDEN_COLS = ["VALOR MONEDA", "FECHA", "FICHERO"];   // no se muestran ni
 const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones/color
 const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
 const EXTRA_COLS = [COL_SINO2, COL_CAT2, COL_WAR];
-// ====================
+// =====================
 
 // 1. MSAL
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
@@ -239,9 +239,7 @@ function renderTabla() {
   G.rows.forEach((row, idx) => {
     if (!pasaFiltros(row)) return;
     visibles++;
-    const v = norm(row[G.idx.SINO2]);
     const tr = document.createElement("tr");
-    if (esRevisable(row)) { if (v === "ok") tr.className = "row-ok"; else if (v === "nok") tr.className = "row-nok"; }
     let html = "";
     G.header.forEach((_, c) => { if (esVisible(c)) html += celda(row, c); });
     html += botonesAccion(row, idx);
@@ -263,6 +261,17 @@ function actualizarProgreso(visibles) {
 }
 
 // ---------- Acciones ----------
+// Resumen del gasto (columnas visibles de origen) para mostrarlo en la ventanita de categoría.
+function resumenFila(row) {
+  const partes = [];
+  G.header.forEach((h, c) => {
+    if (!esVisible(c)) return;
+    if (c === G.idx.SINO2 || c === G.idx.CAT2 || c === G.idx.WAR) return;
+    const v = (row[c] || "").trim();
+    if (v !== "") partes.push(`${h}: ${v}`);
+  });
+  return partes.join("\n");
+}
 function setCampo(rowIdx, colIdx, valor) {
   if (colIdx == null || colIdx < 0) return false;
   if (G.rows[rowIdx][colIdx] === valor) return false;
@@ -278,7 +287,7 @@ function onAccion(idx, act) {
   else if (act === "war") setCampo(idx, G.idx.WAR, warSi(row) ? "No" : "Si");
   else if (act === "cat") {
     const actual = row[G.idx.CAT2] || "";
-    const val = window.prompt("Categoría para este cargo:", actual);
+    const val = window.prompt(resumenFila(row) + "\n\nCategoría para este cargo:", actual);
     if (val === null) return;                       // cancelado
     setCampo(idx, G.idx.CAT2, val.trim());
   }
