@@ -25,7 +25,7 @@ const loginRequest = { scopes: ["User.Read", "Files.ReadWrite"] };
 const fileScopes   = { scopes: ["Files.ReadWrite"] };
 
 // Estado
-const G = { fileId: null, header: [], rows: [], delim: ",", statusIdx: -1 };
+const G = { fileId: null, driveId: null, header: [], rows: [], delim: ",", statusIdx: -1 };
 const filtros = {};
 let revisionIniciada = false;
 let guardando = false, guardarDeNuevo = false;
@@ -60,39 +60,59 @@ function serialF(v, d) { v = v == null ? "" : String(v); return /["\n\r]/.test(v
 function serializeCSV(rows, d) { return rows.map(r => r.map(f => serialF(f, d)).join(d)).join("\r\n"); }
 
 // ---------- Graph / OneDrive ----------
-// Escanea la raíz, encuentra las carpetas que empiezan por PREFIJO_CARPETA y devuelve
-// el item del fichero en la primera que lo contenga.
+const GRAPH = "https://graph.microsoft.com/v1.0";
+// Base del item, teniendo en cuenta si está en TU drive o en el de otro usuario (carpeta compartida).
+function itemBase() {
+  return G.driveId ? `${GRAPH}/drives/${G.driveId}` : `${GRAPH}/me/drive`;
+}
+// Escanea la raíz, encuentra carpetas cuyo nombre empieza por PREFIJO_CARPETA (sin distinguir
+// mayúsculas) — incluidas las compartidas por otro usuario — y devuelve el item del fichero
+// en la primera que lo contenga.
 async function localizarFichero(token) {
   const H = { Authorization: `Bearer ${token}` };
-  const rRoot = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root/children?$top=200`, { headers: H });
+  const rRoot = await fetch(`${GRAPH}/me/drive/root/children?$top=200`, { headers: H });
   if (!rRoot.ok) {
     if (rRoot.status === 401 || rRoot.status === 403)
       throw new Error(`Sin permiso para leer ficheros (HTTP ${rRoot.status}). ¿Añadiste "Files.ReadWrite" en Azure y lo consentiste? Ejecuta tuppersAuth.resetMsal() y vuelve a entrar.`);
     throw new Error("raíz " + rRoot.status + " " + (await rRoot.text()));
   }
   const hijos = (await rRoot.json()).value || [];
-  const carpetas = hijos.filter(it => it.folder && it.name.startsWith(PREFIJO_CARPETA));
+  const prefijo = PREFIJO_CARPETA.toLowerCase();
+  // Una carpeta normal tiene .folder; una compartida es un .remoteItem
+  const carpetas = hijos.filter(it => (it.folder || it.remoteItem) && (it.name || "").toLowerCase().startsWith(prefijo));
   if (!carpetas.length) {
-    console.warn("Carpetas en la raíz:", hijos.filter(it => it.folder).map(it => it.name));
-    setEstado(`No hay ninguna carpeta que empiece por "${PREFIJO_CARPETA}" en la raíz de tu OneDrive.`, true);
+    console.warn("Contenido de la raíz:", hijos.map(it => ({ nombre: it.name, tipo: it.folder ? "carpeta" : it.remoteItem ? "compartida" : "fichero" })));
+    setEstado(`No hay ninguna carpeta que empiece por "${PREFIJO_CARPETA}" en la raíz de tu OneDrive. Mira la consola para ver qué hay.`, true);
     return null;
   }
   for (const c of carpetas) {
-    const rf = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${c.id}:/${encodeURIComponent(FILE_NAME)}`, { headers: H });
-    if (rf.ok) { console.log(`Fichero encontrado en carpeta: ${c.name}`); return await rf.json(); }
+    // Resolver dónde vive realmente la carpeta
+    let driveId = null, folderId = c.id;
+    if (c.remoteItem) { driveId = c.remoteItem.parentReference && c.remoteItem.parentReference.driveId; folderId = c.remoteItem.id; }
+    const base = driveId ? `${GRAPH}/drives/${driveId}` : `${GRAPH}/me/drive`;
+    const rf = await fetch(`${base}/items/${folderId}:/${encodeURIComponent(FILE_NAME)}`, { headers: H });
+    if (rf.ok) {
+      G.driveId = driveId;   // null si es carpeta propia
+      console.log(`Fichero encontrado en carpeta: ${c.name}${driveId ? " (compartida)" : ""}`);
+      return await rf.json();
+    }
+    if ((rf.status === 401 || rf.status === 403) && driveId) {
+      setEstado(`La carpeta "${c.name}" es compartida y necesita el permiso "Files.ReadWrite.All" en Azure (ahora solo tienes "Files.ReadWrite"). Añádelo, resetMsal() y reentra.`, true);
+      return null;
+    }
   }
   console.warn("Carpetas revisadas:", carpetas.map(c => c.name));
   setEstado(`Encontré ${carpetas.length} carpeta(s) "${PREFIJO_CARPETA}*" pero ninguna contiene "${FILE_NAME}".`, true);
   return null;
 }
 async function descargarCsv(token) {
-  const res = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${G.fileId}/content`, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(`${itemBase()}/items/${G.fileId}/content`, { headers: { Authorization: `Bearer ${token}` } });
   if (!res.ok) throw new Error("descarga " + res.status);
   return new TextDecoder("utf-8").decode(await res.arrayBuffer()).replace(/^\uFEFF/, "");
 }
 async function guardarCsv() {
   const token = await getToken(fileScopes);
-  const res = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${G.fileId}/content`, {
+  const res = await fetch(`${itemBase()}/items/${G.fileId}/content`, {
     method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/csv" },
     body: serializeCSV([G.header, ...G.rows], G.delim)
   });
