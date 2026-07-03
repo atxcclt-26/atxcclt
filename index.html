@@ -38,10 +38,19 @@
     td.estado.pend { color: #999; }
     tr.row-ok  { background: #f1f9f3; }
     tr.row-nok { background: #fdf2f1; }
-    .accion button { padding: 4px 11px; margin-right: 6px; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-weight: 600; }
+    .accion { white-space: nowrap; }
+    .accion button { padding: 4px 10px; margin: 2px 5px 2px 0; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-weight: 600; font-size: .8rem; }
     .accion .ok  { background: #1a7f37; }
     .accion .nok { background: #b42318; }
+    .accion .cat { background: #2b6cb0; }
+    .accion .war.no { background: #b42318; }
+    .accion .war.si { background: #1a7f37; }
     .accion button:disabled { opacity: .4; cursor: default; }
+    td.sino2.ok  { color: #1a7f37; font-weight: 600; }
+    td.sino2.nok { color: #b42318; font-weight: 600; }
+    td.sino2.pend { color: #999; }
+    td.war.si { color: #1a7f37; font-weight: 600; }
+    td.war.no { color: #b42318; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -50,7 +59,7 @@
     <h1>Revisión de cargos</h1>
     <button id="loginBtn" type="button">Iniciar sesión</button>
   </header>
-  <p class="build">Generado el 03/07/2026 16:04</p>
+  <p class="build">Generado el 03/07/2026 16:25</p>
 
   <p id="estado-carga">Inicia sesión para cargar el fichero.</p>
 
@@ -63,6 +72,6 @@
   </section>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607031604"></script>
+  <script src="app.js?v=202607031625"></script>
 </body>
 </html>

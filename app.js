@@ -1,20 +1,18 @@
-// app.js — Revisión de cargos (tabla con OK/NOK por fila + filtros por columna)
-// El fichero está en TU OneDrive, dentro de una carpeta cuyo nombre empieza por un prefijo
-// (p.ej. zzz_sg_1, zzz_sg_3, zzz_sg_4, zzz_sg_5). La app localiza sola la que contenga el CSV.
+// app.js — Revisión de cargos (columnas del banco + SINO_2 / CATEGORIA_2 / WARRANTY)
 
 // ====== AJUSTES ======
-const PREFIJO_CARPETA = "zzz_sg_";                 // carpeta en la raíz de tu OneDrive que empieza por esto
+const PREFIJO_CARPETA = "zzz_sg_";                 // carpeta en la raíz (sin distinguir mayúsculas)
 const FILE_NAME       = "AlCaralloConLosTickets.csv";
-const STATUS_COLUMN   = "estado";
+// Columnas
+const HIDDEN_COLS = ["FECHA", "FICHERO"];          // no se muestran ni se filtran
+const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones
+const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
 // =====================
 
-// Detección de dispositivo y URIs de redirección (funciona en local y en GitHub Pages)
+// 1. MSAL
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
                 (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const REDIRECT_POPUP = new URL("blank.html", window.location.href).href;   // para el popup (escritorio)
-const REDIRECT_PAGE  = window.location.origin + window.location.pathname;  // la propia página (móvil, flujo redirect)
-
-// 1. MSAL
+const REDIRECT_PAGE = window.location.origin + window.location.pathname;
 const msalConfig = {
   auth: { clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696", redirectUri: REDIRECT_PAGE },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
@@ -25,7 +23,7 @@ const loginRequest = { scopes: ["User.Read", "Files.ReadWrite"] };
 const fileScopes   = { scopes: ["Files.ReadWrite"] };
 
 // Estado
-const G = { fileId: null, driveId: null, header: [], rows: [], delim: ",", statusIdx: -1 };
+const G = { fileId: null, driveId: null, header: [], rows: [], delim: ",", idx: {}, hidden: [] };
 const filtros = {};
 let revisionIniciada = false;
 let guardando = false, guardarDeNuevo = false;
@@ -35,10 +33,10 @@ function setEstado(msg, err = false) {
   const el = document.getElementById("estado-carga");
   if (el) { el.textContent = msg; el.classList.toggle("error", !!err); }
 }
-function escapeHtml(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-function estadoNorm(v) { return (v || "").trim().toLowerCase(); }
+function escapeHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function norm(v) { return (v || "").trim().toLowerCase(); }
+function up(v) { return (v || "").trim().toUpperCase(); }
+function col(nombre) { return G.header.findIndex(h => up(h) === up(nombre)); }
 
 // ---------- CSV ----------
 function detectarDelim(t) { const f = t.split(/\r?\n/)[0] || ""; return f.split(";").length > f.split(",").length ? ";" : ","; }
@@ -61,48 +59,34 @@ function serializeCSV(rows, d) { return rows.map(r => r.map(f => serialF(f, d)).
 
 // ---------- Graph / OneDrive ----------
 const GRAPH = "https://graph.microsoft.com/v1.0";
-// Base del item, teniendo en cuenta si está en TU drive o en el de otro usuario (carpeta compartida).
-function itemBase() {
-  return G.driveId ? `${GRAPH}/drives/${G.driveId}` : `${GRAPH}/me/drive`;
-}
-// Escanea la raíz, encuentra carpetas cuyo nombre empieza por PREFIJO_CARPETA (sin distinguir
-// mayúsculas) — incluidas las compartidas por otro usuario — y devuelve el item del fichero
-// en la primera que lo contenga.
+function itemBase() { return G.driveId ? `${GRAPH}/drives/${G.driveId}` : `${GRAPH}/me/drive`; }
 async function localizarFichero(token) {
   const H = { Authorization: `Bearer ${token}` };
   const rRoot = await fetch(`${GRAPH}/me/drive/root/children?$top=200`, { headers: H });
   if (!rRoot.ok) {
     if (rRoot.status === 401 || rRoot.status === 403)
-      throw new Error(`Sin permiso para leer ficheros (HTTP ${rRoot.status}). ¿Añadiste "Files.ReadWrite" en Azure y lo consentiste? Ejecuta tuppersAuth.resetMsal() y vuelve a entrar.`);
+      throw new Error(`Sin permiso (HTTP ${rRoot.status}). ¿Añadiste "Files.ReadWrite" en Azure? resetMsal() y reentra.`);
     throw new Error("raíz " + rRoot.status + " " + (await rRoot.text()));
   }
   const hijos = (await rRoot.json()).value || [];
   const prefijo = PREFIJO_CARPETA.toLowerCase();
-  // Una carpeta normal tiene .folder; una compartida es un .remoteItem
   const carpetas = hijos.filter(it => (it.folder || it.remoteItem) && (it.name || "").toLowerCase().startsWith(prefijo));
   if (!carpetas.length) {
     console.warn("Contenido de la raíz:", hijos.map(it => ({ nombre: it.name, tipo: it.folder ? "carpeta" : it.remoteItem ? "compartida" : "fichero" })));
-    setEstado(`No hay ninguna carpeta que empiece por "${PREFIJO_CARPETA}" en la raíz de tu OneDrive. Mira la consola para ver qué hay.`, true);
+    setEstado(`No hay ninguna carpeta que empiece por "${PREFIJO_CARPETA}" en la raíz de tu OneDrive.`, true);
     return null;
   }
   for (const c of carpetas) {
-    // Resolver dónde vive realmente la carpeta
     let driveId = null, folderId = c.id;
     if (c.remoteItem) { driveId = c.remoteItem.parentReference && c.remoteItem.parentReference.driveId; folderId = c.remoteItem.id; }
     const base = driveId ? `${GRAPH}/drives/${driveId}` : `${GRAPH}/me/drive`;
     const rf = await fetch(`${base}/items/${folderId}:/${encodeURIComponent(FILE_NAME)}`, { headers: H });
-    if (rf.ok) {
-      G.driveId = driveId;   // null si es carpeta propia
-      console.log(`Fichero encontrado en carpeta: ${c.name}${driveId ? " (compartida)" : ""}`);
-      return await rf.json();
-    }
+    if (rf.ok) { G.driveId = driveId; console.log(`Fichero encontrado en carpeta: ${c.name}${driveId ? " (compartida)" : ""}`); return await rf.json(); }
     if ((rf.status === 401 || rf.status === 403) && driveId) {
-      setEstado(`La carpeta "${c.name}" es compartida y necesita el permiso "Files.ReadWrite.All" en Azure (ahora solo tienes "Files.ReadWrite"). Añádelo, resetMsal() y reentra.`, true);
-      return null;
+      setEstado(`La carpeta "${c.name}" es compartida y necesita "Files.ReadWrite.All" en Azure.`, true); return null;
     }
   }
-  console.warn("Carpetas revisadas:", carpetas.map(c => c.name));
-  setEstado(`Encontré ${carpetas.length} carpeta(s) "${PREFIJO_CARPETA}*" pero ninguna contiene "${FILE_NAME}".`, true);
+  setEstado(`Encontré carpeta(s) "${PREFIJO_CARPETA}*" pero ninguna contiene "${FILE_NAME}".`, true);
   return null;
 }
 async function descargarCsv(token) {
@@ -123,9 +107,26 @@ function programarGuardado() {
   guardando = true;
   guardarCsv()
     .then(() => setEstado(`Cambios guardados en ${FILE_NAME}.`))
-    .catch(e => setEstado("Error guardando (los cambios siguen en pantalla, reintenta con otra acción): " + e.message, true))
+    .catch(e => setEstado("Error guardando (los cambios siguen en pantalla, reintenta): " + e.message, true))
     .finally(() => { guardando = false; if (guardarDeNuevo) { guardarDeNuevo = false; programarGuardado(); } });
 }
+
+// ---------- Índices de columnas ----------
+function prepararColumnas() {
+  // Añadir columnas nuevas si faltan
+  [COL_SINO2, COL_CAT2, COL_WAR].forEach(name => {
+    if (col(name) === -1) { G.header.push(name); G.rows.forEach(r => r.push("")); }
+  });
+  G.rows.forEach(r => { while (r.length < G.header.length) r.push(""); });
+  G.idx = {
+    SINO: col(COL_SINO), CAT: col(COL_CAT),
+    SINO2: col(COL_SINO2), CAT2: col(COL_CAT2), WAR: col(COL_WAR)
+  };
+  G.hidden = HIDDEN_COLS.map(col).filter(i => i !== -1);
+}
+function esVisible(c) { return !G.hidden.includes(c); }
+function esRevisable(row) { return G.idx.SINO !== -1 && norm(row[G.idx.SINO]) === "no"; }
+function warSi(row) { return norm(row[G.idx.WAR]) === "si"; }
 
 // ---------- Filtros ----------
 function valoresDistintos(c) {
@@ -137,11 +138,14 @@ function construirFiltros() {
   const cont = document.getElementById("filtros");
   cont.innerHTML = "";
   G.header.forEach((h, c) => {
+    if (!esVisible(c)) return;
     const wrap = document.createElement("div"); wrap.className = "f";
     const lab = document.createElement("label"); lab.textContent = h || `Col ${c + 1}`;
     const sel = document.createElement("select");
-    if (c === G.statusIdx) {
+    if (c === G.idx.SINO2) {
       sel.innerHTML = `<option value="">Todos</option><option value="__pend">Pendientes</option><option value="ok">OK</option><option value="nok">NOK</option>`;
+    } else if (c === G.idx.WAR) {
+      sel.innerHTML = `<option value="">Todos</option><option value="si">Sí</option><option value="no">No</option>`;
     } else {
       sel.innerHTML = `<option value="">Todos</option>` + valoresDistintos(c).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
     }
@@ -157,20 +161,49 @@ function construirFiltros() {
 function pasaFiltros(row) {
   for (const c in filtros) {
     const sel = filtros[c]; if (!sel) continue;
-    if (Number(c) === G.statusIdx) {
-      const v = estadoNorm(row[G.statusIdx]);
-      if (sel === "__pend" && (v === "ok" || v === "nok")) return false;
+    const ci = Number(c);
+    if (ci === G.idx.SINO2) {
+      const v = norm(row[G.idx.SINO2]);
+      if (sel === "__pend" && !(esRevisable(row) && v !== "ok" && v !== "nok")) return false;
       if (sel === "ok" && v !== "ok") return false;
       if (sel === "nok" && v !== "nok") return false;
-    } else if ((row[c] || "") !== sel) return false;
+    } else if (ci === G.idx.WAR) {
+      if ((warSi(row) ? "si" : "no") !== sel) return false;
+    } else if ((row[ci] || "") !== sel) return false;
   }
   return true;
 }
 
 // ---------- Tabla ----------
 function renderCabecera() {
-  document.querySelector("#tabla thead").innerHTML =
-    "<tr>" + G.header.map(h => `<th>${escapeHtml(h)}</th>`).join("") + "<th>Acción</th></tr>";
+  const ths = G.header.map((h, c) => esVisible(c) ? `<th>${escapeHtml(h)}</th>` : "").join("");
+  document.querySelector("#tabla thead").innerHTML = `<tr>${ths}<th>Acción</th></tr>`;
+}
+function celda(row, c) {
+  if (c === G.idx.SINO2) {
+    const v = norm(row[c]); const cls = v === "ok" ? "ok" : v === "nok" ? "nok" : "pend";
+    return `<td class="sino2 ${cls}">${escapeHtml(row[c] || "—")}</td>`;
+  }
+  if (c === G.idx.WAR) {
+    const si = warSi(row);
+    return `<td class="war ${si ? "si" : "no"}">${si ? "Sí" : "No"}</td>`;
+  }
+  return `<td>${escapeHtml(row[c] || "")}</td>`;
+}
+function botonesAccion(row, idx) {
+  let h = "";
+  if (esRevisable(row)) {                        // OK/NOK solo si SINO = No
+    const v = norm(row[G.idx.SINO2]);
+    h += `<button class="ok" data-act="sino2" data-val="ok" data-idx="${idx}"${v === "ok" ? " disabled" : ""}>OK</button>`;
+    h += `<button class="nok" data-act="sino2" data-val="nok" data-idx="${idx}"${v === "nok" ? " disabled" : ""}>NOK</button>`;
+  }
+  if (G.idx.CAT !== -1 && norm(row[G.idx.CAT]) === "otros") {   // Categoría si CATEGORIA = OTROS (siempre visible)
+    const cat = row[G.idx.CAT2] || "";
+    h += `<button class="cat" data-act="cat" data-idx="${idx}">Categoría${cat ? ": " + escapeHtml(cat) : ""}</button>`;
+  }
+  const si = warSi(row);                          // Garantía siempre
+  h += `<button class="war ${si ? "si" : "no"}" data-act="war" data-idx="${idx}">Garantía: ${si ? "Sí" : "No"}</button>`;
+  return `<td class="accion">${h}</td>`;
 }
 function renderTabla() {
   const tbody = document.querySelector("#tabla tbody");
@@ -179,39 +212,49 @@ function renderTabla() {
   G.rows.forEach((row, idx) => {
     if (!pasaFiltros(row)) return;
     visibles++;
-    const v = estadoNorm(row[G.statusIdx]);
+    const v = norm(row[G.idx.SINO2]);
     const tr = document.createElement("tr");
-    if (v === "ok") tr.className = "row-ok"; else if (v === "nok") tr.className = "row-nok";
+    if (esRevisable(row)) { if (v === "ok") tr.className = "row-ok"; else if (v === "nok") tr.className = "row-nok"; }
     let html = "";
-    G.header.forEach((_, c) => {
-      if (c === G.statusIdx) {
-        const cls = v === "ok" ? "ok" : v === "nok" ? "nok" : "pend";
-        html += `<td class="estado ${cls}">${escapeHtml(row[c] || "—")}</td>`;
-      } else {
-        html += `<td>${escapeHtml(row[c] || "")}</td>`;
-      }
-    });
-    html += `<td class="accion"><button class="ok" data-idx="${idx}" data-val="ok"${v === "ok" ? " disabled" : ""}>OK</button><button class="nok" data-idx="${idx}" data-val="nok"${v === "nok" ? " disabled" : ""}>NOK</button></td>`;
+    G.header.forEach((_, c) => { if (esVisible(c)) html += celda(row, c); });
+    html += botonesAccion(row, idx);
     tr.innerHTML = html;
     frag.appendChild(tr);
   });
-  tbody.innerHTML = "";
-  tbody.appendChild(frag);
+  tbody.innerHTML = ""; tbody.appendChild(frag);
   actualizarProgreso(visibles);
 }
 function actualizarProgreso(visibles) {
-  const total = G.rows.length;
-  const ok = G.rows.filter(r => estadoNorm(r[G.statusIdx]) === "ok").length;
-  const nok = G.rows.filter(r => estadoNorm(r[G.statusIdx]) === "nok").length;
+  const rev = G.rows.filter(esRevisable);
+  const ok = rev.filter(r => norm(r[G.idx.SINO2]) === "ok").length;
+  const nok = rev.filter(r => norm(r[G.idx.SINO2]) === "nok").length;
+  const war = G.rows.filter(warSi).length;
   const prog = document.getElementById("progreso");
-  if (prog) prog.textContent = `${total} cargos · OK: ${ok} · NOK: ${nok} · pendientes: ${total - ok - nok}` + (visibles != null ? ` · mostrando: ${visibles}` : "");
+  if (prog) prog.textContent =
+    `${G.rows.length} cargos · revisables (SINO=No): ${rev.length} · OK: ${ok} · NOK: ${nok} · pendientes: ${rev.length - ok - nok} · garantía Sí: ${war}` +
+    (visibles != null ? ` · mostrando: ${visibles}` : "");
 }
-function marcar(idx, valor) {
-  const prev = G.rows[idx][G.statusIdx];
-  if (estadoNorm(prev) === valor) return;
-  G.rows[idx][G.statusIdx] = valor;
+
+// ---------- Acciones ----------
+function setCampo(rowIdx, colIdx, valor) {
+  if (colIdx == null || colIdx < 0) return false;
+  if (G.rows[rowIdx][colIdx] === valor) return false;
+  G.rows[rowIdx][colIdx] = valor;
   renderTabla();
   programarGuardado();
+  return true;
+}
+function onAccion(idx, act) {
+  const row = G.rows[idx];
+  if (act === "sino2-ok")  setCampo(idx, G.idx.SINO2, "ok");
+  else if (act === "sino2-nok") setCampo(idx, G.idx.SINO2, "nok");
+  else if (act === "war") setCampo(idx, G.idx.WAR, warSi(row) ? "No" : "Si");
+  else if (act === "cat") {
+    const actual = row[G.idx.CAT2] || "";
+    const val = window.prompt("Categoría para este cargo:", actual);
+    if (val === null) return;                     // cancelado
+    setCampo(idx, G.idx.CAT2, val.trim());
+  }
 }
 
 // ---------- Carga ----------
@@ -222,7 +265,7 @@ async function iniciarRevision() {
   try {
     const token = await getToken(fileScopes);
     const item = await localizarFichero(token);
-    if (!item) { revisionIniciada = false; return; }   // el mensaje de detalle ya lo puso localizarFichero
+    if (!item) { revisionIniciada = false; return; }
     G.fileId = item.id;
     const text = await descargarCsv(token);
     G.delim = detectarDelim(text);
@@ -230,10 +273,7 @@ async function iniciarRevision() {
     if (!all.length) { setEstado("El fichero está vacío.", true); return; }
     G.header = all[0];
     G.rows = all.slice(1);
-    G.statusIdx = G.header.findIndex(h => h.trim().toLowerCase() === STATUS_COLUMN.toLowerCase());
-    if (G.statusIdx === -1) { G.header.push(STATUS_COLUMN); G.statusIdx = G.header.length - 1; }
-    G.rows.forEach(r => { while (r.length < G.header.length) r.push(""); });
-
+    prepararColumnas();
     construirFiltros();
     renderCabecera();
     renderTabla();
@@ -272,40 +312,33 @@ function updateAuthUI() {
     loginBtn.onclick = async (e) => { e.preventDefault(); loginBtn.disabled = true; try { await handleLoginClick(); } finally { loginBtn.disabled = false; updateAuthUI(); } };
   }
 }
-async function handleLoginClick() {
-  // Flujo por redirección en todos los dispositivos: evita los problemas de COOP con el popup.
-  return msalInstance.loginRedirect(loginRequest);
-}
+async function handleLoginClick() { return msalInstance.loginRedirect(loginRequest); }
 async function getToken(request) {
   const active = msalInstance.getActiveAccount();
   const req = Object.assign({}, request, { account: request.account || active });
   try { return (await msalInstance.acquireTokenSilent(req)).accessToken; }
-  catch (e) {
-    console.warn("Silent falló, redirigiendo para renovar token:", e && e.errorCode);
-    msalInstance.acquireTokenRedirect(request);   // navega y vuelve; tras el login suele bastar el silent
-    return;
-  }
+  catch (e) { console.warn("Silent falló, redirigiendo:", e && e.errorCode); msalInstance.acquireTokenRedirect(request); return; }
 }
 function resetMsal() {
   Object.keys(localStorage).filter(k => k.startsWith("msal.") || k.includes(msalConfig.auth.clientId)).forEach(k => localStorage.removeItem(k));
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   console.log("Estado MSAL limpiado.");
 }
-// Ayudante de consola: tuppersAuth.listar() lista la raíz de tu OneDrive
 async function listarOneDrive(carpeta = "") {
   const token = await getToken(fileScopes);
-  const url = carpeta
-    ? `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURI(carpeta)}:/children`
-    : `https://graph.microsoft.com/v1.0/me/drive/root/children?$top=200`;
+  const url = carpeta ? `${GRAPH}/me/drive/root:/${encodeURI(carpeta)}:/children` : `${GRAPH}/me/drive/root/children?$top=200`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   if (!r.ok) { console.error("listar:", r.status, await r.text()); return; }
-  console.table(((await r.json()).value || []).map(it => ({ nombre: it.name, tipo: it.folder ? "carpeta" : "fichero" })));
+  console.table(((await r.json()).value || []).map(it => ({ nombre: it.name, tipo: it.folder ? "carpeta" : it.remoteItem ? "compartida" : "fichero" })));
 }
 
 // ---------- Arranque ----------
 document.querySelector("#tabla tbody").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-val]");
-  if (b) marcar(Number(b.dataset.idx), b.dataset.val);
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const idx = Number(b.dataset.idx);
+  const act = b.dataset.act === "sino2" ? "sino2-" + b.dataset.val : b.dataset.act;
+  onAccion(idx, act);
 });
 (async () => {
   try {
