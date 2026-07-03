@@ -17,7 +17,7 @@ const HIDDEN_COLS = ["VALOR MONEDA", "FECHA", "FICHERO"];   // no se muestran ni
 const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones/color
 const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
 const EXTRA_COLS = [COL_SINO2, COL_CAT2, COL_WAR];
-// =====================
+// ====================
 
 // 1. MSAL
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
