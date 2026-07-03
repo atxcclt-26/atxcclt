@@ -3,14 +3,20 @@
 // (p.ej. zzz_sg_1, zzz_sg_3, zzz_sg_4, zzz_sg_5). La app localiza sola la que contenga el CSV.
 
 // ====== AJUSTES ======
-const PREFIJO_CARPETA = "ZZZ_SG_";                 // carpeta en la raíz de tu OneDrive que empieza por esto
+const PREFIJO_CARPETA = "zzz_sg_";                 // carpeta en la raíz de tu OneDrive que empieza por esto
 const FILE_NAME       = "AlCaralloConLosTickets.csv";
 const STATUS_COLUMN   = "estado";
 // =====================
 
+// Detección de dispositivo y URIs de redirección (funciona en local y en GitHub Pages)
+const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const REDIRECT_POPUP = new URL("blank.html", window.location.href).href;   // para el popup (escritorio)
+const REDIRECT_PAGE  = window.location.origin + window.location.pathname;  // la propia página (móvil, flujo redirect)
+
 // 1. MSAL
 const msalConfig = {
-  auth: { clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696", redirectUri: "http://localhost:8000/blank.html" },
+  auth: { clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696", redirectUri: REDIRECT_PAGE },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
   system: { loggerOptions: { logLevel: msal.LogLevel.Warning, loggerCallback: (l, m, p) => { if (!p) console.log(`[MSAL][${l}]`, m); } } }
 };
@@ -247,14 +253,18 @@ function updateAuthUI() {
   }
 }
 async function handleLoginClick() {
-  try { const r = await msalInstance.loginPopup(loginRequest); if (r && r.account) msalInstance.setActiveAccount(r.account); return r; }
-  catch (err) { console.error("loginPopup error:", err); try { msalInstance.loginRedirect(loginRequest); } catch (e) { console.error(e); } }
+  // Flujo por redirección en todos los dispositivos: evita los problemas de COOP con el popup.
+  return msalInstance.loginRedirect(loginRequest);
 }
 async function getToken(request) {
   const active = msalInstance.getActiveAccount();
   const req = Object.assign({}, request, { account: request.account || active });
   try { return (await msalInstance.acquireTokenSilent(req)).accessToken; }
-  catch { return (await msalInstance.acquireTokenPopup(request)).accessToken; }
+  catch (e) {
+    console.warn("Silent falló, redirigiendo para renovar token:", e && e.errorCode);
+    msalInstance.acquireTokenRedirect(request);   // navega y vuelve; tras el login suele bastar el silent
+    return;
+  }
 }
 function resetMsal() {
   Object.keys(localStorage).filter(k => k.startsWith("msal.") || k.includes(msalConfig.auth.clientId)).forEach(k => localStorage.removeItem(k));
