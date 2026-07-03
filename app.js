@@ -8,16 +8,16 @@ const FILE_NAME       = "AlCaralloConLosTickets.csv";
 // Estos son los nombres de columna (etiquetas de combos y tabla), en el orden del fichero.
 const BASE_HEADER = [
   "BANCO", "FECHA CARGO", "FECHA GASTO", "COMERCIO", "DETALLE",
-  "SINO", "€", "CATEGORIA", "NPI", "MONEDA", "VALOR MONEDA",
+  "SINO", "€", "CATEGORIA", "NPI", "MONEDA", "VALOR MONEDA", "VALOR ORIGINAL",
   "FECHA", "FICHERO"
 ];
 
 // Columnas
-const HIDDEN_COLS = ["FECHA", "FICHERO"];          // no se muestran ni se filtran
+const HIDDEN_COLS = ["VALOR MONEDA", "FECHA", "FICHERO"];   // no se muestran ni se filtran
 const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones/color
 const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
 const EXTRA_COLS = [COL_SINO2, COL_CAT2, COL_WAR];
-// ======================
+// =====================
 
 // 1. MSAL
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
