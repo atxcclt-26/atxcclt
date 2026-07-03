@@ -3,10 +3,20 @@
 // ====== AJUSTES ======
 const PREFIJO_CARPETA = "zzz_sg_";                 // carpeta en la raíz (sin distinguir mayúsculas)
 const FILE_NAME       = "AlCaralloConLosTickets.csv";
+
+// El CSV NO tiene fila de cabecera: TODAS las filas son datos.
+// Estos son los nombres de columna (etiquetas de combos y tabla), en el orden del fichero.
+const BASE_HEADER = [
+  "BANCO", "FECHA CARGO", "FECHA GASTO", "COMERCIO", "DETALLE",
+  "SINO", "€", "CATEGORIA", "NPI", "MONEDA", "VALOR MONEDA",
+  "FECHA", "FICHERO"
+];
+
 // Columnas
 const HIDDEN_COLS = ["FECHA", "FICHERO"];          // no se muestran ni se filtran
-const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones
+const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones/color
 const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
+const EXTRA_COLS = [COL_SINO2, COL_CAT2, COL_WAR];
 // =====================
 
 // 1. MSAL
@@ -98,7 +108,8 @@ async function guardarCsv() {
   const token = await getToken(fileScopes);
   const res = await fetch(`${itemBase()}/items/${G.fileId}/content`, {
     method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/csv" },
-    body: serializeCSV([G.header, ...G.rows], G.delim)
+    // El fichero es headerless: se guardan solo las filas de datos (con las 3 columnas añadidas al final).
+    body: serializeCSV(G.rows, G.delim)
   });
   if (!res.ok) throw new Error(res.status + " " + (await res.text()));
 }
@@ -113,10 +124,11 @@ function programarGuardado() {
 
 // ---------- Índices de columnas ----------
 function prepararColumnas() {
-  // Añadir columnas nuevas si faltan
-  [COL_SINO2, COL_CAT2, COL_WAR].forEach(name => {
+  // La cabecera (BASE_HEADER + EXTRA_COLS) ya se fija al cargar; esto es un no-op salvo que faltara alguna.
+  EXTRA_COLS.forEach(name => {
     if (col(name) === -1) { G.header.push(name); G.rows.forEach(r => r.push("")); }
   });
+  // Normaliza cada fila a la longitud de la cabecera (rellena las columnas añadidas la 1ª vez).
   G.rows.forEach(r => { while (r.length < G.header.length) r.push(""); });
   G.idx = {
     SINO: col(COL_SINO), CAT: col(COL_CAT),
@@ -138,7 +150,7 @@ function construirFiltros() {
   const cont = document.getElementById("filtros");
   cont.innerHTML = "";
   G.header.forEach((h, c) => {
-    if (!esVisible(c)) return;
+    if (!esVisible(c)) return;                      // FECHA / FICHERO no generan combo
     const wrap = document.createElement("div"); wrap.className = "f";
     const lab = document.createElement("label"); lab.textContent = h || `Col ${c + 1}`;
     const sel = document.createElement("select");
@@ -188,11 +200,26 @@ function celda(row, c) {
     const si = warSi(row);
     return `<td class="war ${si ? "si" : "no"}">${si ? "Sí" : "No"}</td>`;
   }
+  if (c === G.idx.SINO) {
+    // Rojo si SINO = "No" y SINO_2 sigue sin clasificar (vacío o "no"); verde en el resto.
+    const flagged = up(row[c]) === "NO";
+    const s2 = norm(row[G.idx.SINO2]);
+    const resuelto = s2 !== "" && s2 !== "no";
+    const cls = (flagged && !resuelto) ? "cell-red" : "cell-green";
+    return `<td class="${cls}">${escapeHtml(row[c] || "")}</td>`;
+  }
+  if (c === G.idx.CAT) {
+    // Rojo si CATEGORIA = "OTROS" y CATEGORIA_2 está vacío; verde en el resto.
+    const flagged = up(row[c]) === "OTROS";
+    const cat2 = (row[G.idx.CAT2] || "").trim();
+    const cls = (flagged && cat2 === "") ? "cell-red" : "cell-green";
+    return `<td class="${cls}">${escapeHtml(row[c] || "")}</td>`;
+  }
   return `<td>${escapeHtml(row[c] || "")}</td>`;
 }
 function botonesAccion(row, idx) {
   let h = "";
-  if (esRevisable(row)) {                        // OK/NOK solo si SINO = No
+  if (esRevisable(row)) {                          // OK/NOK solo si SINO = No
     const v = norm(row[G.idx.SINO2]);
     h += `<button class="ok" data-act="sino2" data-val="ok" data-idx="${idx}"${v === "ok" ? " disabled" : ""}>OK</button>`;
     h += `<button class="nok" data-act="sino2" data-val="nok" data-idx="${idx}"${v === "nok" ? " disabled" : ""}>NOK</button>`;
@@ -201,7 +228,7 @@ function botonesAccion(row, idx) {
     const cat = row[G.idx.CAT2] || "";
     h += `<button class="cat" data-act="cat" data-idx="${idx}">Categoría${cat ? ": " + escapeHtml(cat) : ""}</button>`;
   }
-  const si = warSi(row);                          // Garantía siempre
+  const si = warSi(row);                           // Garantía siempre
   h += `<button class="war ${si ? "si" : "no"}" data-act="war" data-idx="${idx}">Garantía: ${si ? "Sí" : "No"}</button>`;
   return `<td class="accion">${h}</td>`;
 }
@@ -252,7 +279,7 @@ function onAccion(idx, act) {
   else if (act === "cat") {
     const actual = row[G.idx.CAT2] || "";
     const val = window.prompt("Categoría para este cargo:", actual);
-    if (val === null) return;                     // cancelado
+    if (val === null) return;                       // cancelado
     setCampo(idx, G.idx.CAT2, val.trim());
   }
 }
@@ -271,8 +298,9 @@ async function iniciarRevision() {
     G.delim = detectarDelim(text);
     const all = parseCSV(text, G.delim);
     if (!all.length) { setEstado("El fichero está vacío.", true); return; }
-    G.header = all[0];
-    G.rows = all.slice(1);
+    // El CSV es headerless: TODAS las filas son datos. La cabecera es sintética (etiquetas fijas).
+    G.header = BASE_HEADER.concat(EXTRA_COLS);
+    G.rows = all;
     prepararColumnas();
     construirFiltros();
     renderCabecera();
