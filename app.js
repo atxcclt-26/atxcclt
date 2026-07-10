@@ -14,7 +14,7 @@ const BASE_HEADER = [
 
 // Columnas
 const HIDDEN_COLS = ["VALOR MONEDA", "FECHA", "FICHERO"];   // no se muestran ni se filtran
-const COL_SINO = "SINO", COL_CAT = "CATEGORIA";    // columnas de origen que disparan botones/color
+const COL_SINO = "SINO", COL_CAT = "CATEGORIA", COL_COM = "COMENTARIO";  // columnas de origen que disparan botones/color
 const COL_SINO2 = "SINO_2", COL_CAT2 = "CATEGORIA_2", COL_WAR = "WARRANTY";  // columnas nuevas
 const EXTRA_COLS = [COL_SINO2, COL_CAT2, COL_WAR];
 // =====================
@@ -131,7 +131,7 @@ function prepararColumnas() {
   // Normaliza cada fila a la longitud de la cabecera (rellena las columnas añadidas la 1ª vez).
   G.rows.forEach(r => { while (r.length < G.header.length) r.push(""); });
   G.idx = {
-    SINO: col(COL_SINO), CAT: col(COL_CAT),
+    SINO: col(COL_SINO), CAT: col(COL_CAT), COM: col(COL_COM),
     SINO2: col(COL_SINO2), CAT2: col(COL_CAT2), WAR: col(COL_WAR)
   };
   G.hidden = HIDDEN_COLS.map(col).filter(i => i !== -1);
@@ -191,7 +191,7 @@ function renderCabecera() {
   const ths = G.header.map((h, c) => esVisible(c) ? `<th>${escapeHtml(h)}</th>` : "").join("");
   document.querySelector("#tabla thead").innerHTML = `<tr>${ths}<th>Acción</th></tr>`;
 }
-function celda(row, c) {
+function celda(row, c, idx) {
   if (c === G.idx.SINO2) {
     const v = norm(row[c]); const cls = v === "ok" ? "ok" : v === "nok" ? "nok" : "pend";
     return `<td class="sino2 ${cls}">${escapeHtml(row[c] || "—")}</td>`;
@@ -206,30 +206,34 @@ function celda(row, c) {
     const s2 = norm(row[G.idx.SINO2]);
     const resuelto = s2 !== "" && s2 !== "no";
     const cls = (flagged && !resuelto) ? "cell-red" : "cell-green";
-    return `<td class="${cls}">${escapeHtml(row[c] || "")}</td>`;
+    // Botones OK/NOK dentro de la celda SINO (escriben en SINO_2), solo si SINO = No.
+    let btns = "";
+    if (esRevisable(row)) {
+      const v = norm(row[G.idx.SINO2]);
+      btns += ` <button class="ok mini" data-act="sino2" data-val="ok" data-idx="${idx}"${v === "ok" ? " disabled" : ""}>OK</button>`;
+      btns += `<button class="nok mini" data-act="sino2" data-val="nok" data-idx="${idx}"${v === "nok" ? " disabled" : ""}>NOK</button>`;
+    }
+    return `<td class="${cls}">${escapeHtml(row[c] || "")}${btns}</td>`;
   }
   if (c === G.idx.CAT) {
     // Rojo si CATEGORIA = "OTROS" y CATEGORIA_2 está vacío; verde en el resto.
     const flagged = up(row[c]) === "OTROS";
     const cat2 = (row[G.idx.CAT2] || "").trim();
     const cls = (flagged && cat2 === "") ? "cell-red" : "cell-green";
-    return `<td class="${cls}">${escapeHtml(row[c] || "")}</td>`;
+    // Botón CAT en todas las celdas de CATEGORIA (escribe en CATEGORIA_2).
+    const btn = ` <button class="cat mini" data-act="cat" data-idx="${idx}">CAT</button>`;
+    return `<td class="${cls}">${escapeHtml(row[c] || "")}${btn}</td>`;
+  }
+  if (c === G.idx.COM) {
+    // Botón de edición en la celda COMENTARIO (escribe en el propio campo COMENTARIO).
+    const btn = ` <button class="com mini" data-act="com" data-idx="${idx}">✎</button>`;
+    return `<td>${escapeHtml(row[c] || "")}${btn}</td>`;
   }
   return `<td>${escapeHtml(row[c] || "")}</td>`;
 }
 function botonesAccion(row, idx) {
-  let h = "";
-  if (esRevisable(row)) {                          // OK/NOK solo si SINO = No
-    const v = norm(row[G.idx.SINO2]);
-    h += `<button class="ok" data-act="sino2" data-val="ok" data-idx="${idx}"${v === "ok" ? " disabled" : ""}>OK</button>`;
-    h += `<button class="nok" data-act="sino2" data-val="nok" data-idx="${idx}"${v === "nok" ? " disabled" : ""}>NOK</button>`;
-  }
-  if (G.idx.CAT !== -1 && norm(row[G.idx.CAT]) === "otros") {   // Categoría si CATEGORIA = OTROS (siempre visible)
-    const cat = row[G.idx.CAT2] || "";
-    h += `<button class="cat" data-act="cat" data-idx="${idx}">Categoría${cat ? ": " + escapeHtml(cat) : ""}</button>`;
-  }
-  const si = warSi(row);                           // Garantía siempre
-  h += `<button class="war ${si ? "si" : "no"}" data-act="war" data-idx="${idx}">Garantía: ${si ? "Sí" : "No"}</button>`;
+  const si = warSi(row);                           // Garantía se queda como está
+  const h = `<button class="war ${si ? "si" : "no"}" data-act="war" data-idx="${idx}">Garantía: ${si ? "Sí" : "No"}</button>`;
   return `<td class="accion">${h}</td>`;
 }
 function renderTabla() {
@@ -241,7 +245,7 @@ function renderTabla() {
     visibles++;
     const tr = document.createElement("tr");
     let html = "";
-    G.header.forEach((_, c) => { if (esVisible(c)) html += celda(row, c); });
+    G.header.forEach((_, c) => { if (esVisible(c)) html += celda(row, c, idx); });
     html += botonesAccion(row, idx);
     tr.innerHTML = html;
     frag.appendChild(tr);
@@ -290,6 +294,12 @@ function onAccion(idx, act) {
     const val = window.prompt(resumenFila(row) + "\n\nCategoría para este cargo:", actual);
     if (val === null) return;                       // cancelado
     setCampo(idx, G.idx.CAT2, val.trim());
+  }
+  else if (act === "com") {
+    const actual = row[G.idx.COM] || "";
+    const val = window.prompt(resumenFila(row) + "\n\nComentario para este cargo:", actual);
+    if (val === null) return;                       // cancelado
+    setCampo(idx, G.idx.COM, val.trim());
   }
 }
 

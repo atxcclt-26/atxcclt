@@ -44,6 +44,13 @@
     .accion .war.no { background: #f7d4d0; color: #b42318; }
     .accion .war.si { background: #d5efdc; color: #1a7f37; }
     .accion button:disabled { opacity: .4; cursor: default; }
+    /* Botones dentro de las celdas (SINO, CATEGORIA, COMENTARIO) */
+    td .mini { padding: 2px 8px; margin-left: 6px; border: 0; border-radius: 6px; color: #fff; cursor: pointer; font-weight: 600; font-size: .72rem; vertical-align: middle; }
+    td .mini.ok  { background: #1a7f37; }
+    td .mini.nok { background: #b42318; margin-left: 3px; }
+    td .mini.cat { background: #2b6cb0; }
+    td .mini.com { background: #6b7280; }
+    td .mini:disabled { opacity: .4; cursor: default; }
     td.sino2.ok  { color: #1a7f37; font-weight: 600; }
     td.sino2.nok { color: #b42318; font-weight: 600; }
     td.sino2.pend { color: #999; }
@@ -60,7 +67,7 @@
     <h1>Revisión de cargos</h1>
     <button id="loginBtn" type="button">Iniciar sesión</button>
   </header>
-  <p class="build">Generado el 03/07/2026 18:10</p>
+  <p class="build">Generado el 10/07/2026</p>
 
   <p id="estado-carga">Inicia sesión para cargar el fichero.</p>
 
@@ -73,6 +80,6 @@
   </section>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607031810"></script>
+  <script src="app.js?v=202607101200"></script>
 </body>
 </html>
