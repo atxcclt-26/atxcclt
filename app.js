@@ -140,48 +140,155 @@ function esVisible(c) { return !G.hidden.includes(c); }
 function esRevisable(row) { return G.idx.SINO !== -1 && norm(row[G.idx.SINO]) === "no"; }
 function warSi(row) { return norm(row[G.idx.WAR]) === "si"; }
 
-// ---------- Filtros ----------
-function valoresDistintos(c) {
-  const s = new Set();
-  G.rows.forEach(r => { const v = r[c] || ""; if (v !== "") s.add(v); });
-  return [...s].sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+// ---------- Filtros (multiselección estilo Excel) ----------
+// filtros[c] = Set de claves seleccionadas; si no existe la entrada, la columna no filtra ("Todos").
+// Estado solo en memoria: al recargar la página vuelve todo a "Todos".
+const KEY_VACIO = "__vacio";
+let panelAbierto = null;                            // índice de columna del panel desplegado
+
+// Clave de filtrado de una fila para la columna c (categorías sintéticas en SINO_2 y WARRANTY).
+function claveFila(row, c) {
+  if (c === G.idx.SINO2) {
+    const v = norm(row[c]);
+    if (v === "ok") return "ok";
+    if (v === "nok") return "nok";
+    if (esRevisable(row)) return "__pend";
+    return KEY_VACIO;                               // no revisable y sin clasificar
+  }
+  if (c === G.idx.WAR) return warSi(row) ? "si" : "no";
+  const v = row[c] || "";
+  return v === "" ? KEY_VACIO : v;
 }
+function etiquetaClave(c, k) {
+  if (c === G.idx.SINO2) return k === "__pend" ? "Pendientes" : k === "ok" ? "OK" : k === "nok" ? "NOK" : "(No revisables)";
+  if (c === G.idx.WAR) return k === "si" ? "Sí" : "No";
+  return k === KEY_VACIO ? "(Vacíos)" : k;
+}
+
+// Valores del desplegable de la columna c, recalculados según los filtros de las DEMÁS columnas (como Excel).
+function valoresColumna(c) {
+  const keys = new Set();
+  G.rows.forEach(r => { if (pasaFiltros(r, c)) keys.add(claveFila(r, c)); });
+  if (c === G.idx.SINO2) return ["__pend", "ok", "nok", KEY_VACIO].filter(k => keys.has(k));
+  if (c === G.idx.WAR) return ["si", "no"].filter(k => keys.has(k));
+  return [...keys].sort((a, b) => {
+    if (a === KEY_VACIO) return 1;
+    if (b === KEY_VACIO) return -1;
+    return a.localeCompare(b, "es", { numeric: true });
+  });
+}
+
+function textoBoton(c) {
+  const set = filtros[c];
+  if (!set) return "Todos";
+  if (set.size === 0) return "Ninguno";
+  if (set.size === 1) return etiquetaClave(c, [...set][0]);
+  return `${set.size} seleccionados`;
+}
+
 function construirFiltros() {
   const cont = document.getElementById("filtros");
   cont.innerHTML = "";
+  panelAbierto = null;
   G.header.forEach((h, c) => {
-    if (!esVisible(c)) return;                      // FECHA / FICHERO no generan combo
-    const wrap = document.createElement("div"); wrap.className = "f";
+    if (!esVisible(c)) return;                      // FECHA / FICHERO no generan filtro
+    const wrap = document.createElement("div"); wrap.className = "f msel";
     const lab = document.createElement("label"); lab.textContent = h || `Col ${c + 1}`;
-    const sel = document.createElement("select");
-    if (c === G.idx.SINO2) {
-      sel.innerHTML = `<option value="">Todos</option><option value="__pend">Pendientes</option><option value="ok">OK</option><option value="nok">NOK</option>`;
-    } else if (c === G.idx.WAR) {
-      sel.innerHTML = `<option value="">Todos</option><option value="si">Sí</option><option value="no">No</option>`;
-    } else {
-      sel.innerHTML = `<option value="">Todos</option>` + valoresDistintos(c).map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join("");
-    }
-    sel.value = filtros[c] || "";
-    sel.addEventListener("change", () => { filtros[c] = sel.value; renderTabla(); });
-    wrap.append(lab, sel); cont.appendChild(wrap);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "msel-btn" + (filtros[c] ? " activo" : "");
+    btn.textContent = textoBoton(c);
+    btn.addEventListener("click", (e) => { e.stopPropagation(); togglePanel(c, wrap, btn); });
+    wrap.append(lab, btn);
+    cont.appendChild(wrap);
   });
   const btn = document.createElement("button");
   btn.id = "btnLimpiar"; btn.textContent = "Limpiar";
   btn.addEventListener("click", () => { Object.keys(filtros).forEach(k => delete filtros[k]); construirFiltros(); renderTabla(); });
   cont.appendChild(btn);
 }
-function pasaFiltros(row) {
+
+function cerrarPaneles() {
+  document.querySelectorAll(".msel-panel").forEach(p => p.remove());
+  panelAbierto = null;
+}
+
+function togglePanel(c, wrap, btn) {
+  const yaAbierto = panelAbierto === c;
+  cerrarPaneles();
+  if (yaAbierto) return;
+  panelAbierto = c;
+
+  const panel = document.createElement("div");
+  panel.className = "msel-panel";
+  panel.addEventListener("click", (e) => e.stopPropagation());
+
+  const claves = valoresColumna(c);
+  // Estado de trabajo: sin filtro previo = todo seleccionado
+  const sel = new Set(filtros[c] ? [...filtros[c]] : claves);
+
+  // Buscador (solo si la lista es larga)
+  let filtroTxt = "";
+  const buscador = document.createElement("input");
+  buscador.type = "search"; buscador.placeholder = "Buscar…"; buscador.className = "msel-busca";
+  if (claves.length > 8) panel.appendChild(buscador);
+
+  const lista = document.createElement("div"); lista.className = "msel-lista";
+  panel.appendChild(lista);
+
+  const aplicar = () => {
+    // Normalizar: con todas las claves marcadas, la columna deja de filtrar
+    if (claves.every(k => sel.has(k))) delete filtros[c];
+    else filtros[c] = new Set(sel);
+    btn.textContent = textoBoton(c);
+    btn.classList.toggle("activo", !!filtros[c]);
+    renderTabla();
+  };
+
+  const pintaLista = () => {
+    lista.innerHTML = "";
+    const visibles = claves.filter(k => etiquetaClave(c, k).toLowerCase().includes(filtroTxt));
+
+    const lt = document.createElement("label"); lt.className = "msel-item msel-todo";
+    const ct = document.createElement("input"); ct.type = "checkbox";
+    ct.checked = visibles.length > 0 && visibles.every(k => sel.has(k));
+    ct.addEventListener("change", () => {
+      visibles.forEach(k => ct.checked ? sel.add(k) : sel.delete(k));
+      pintaLista();
+      aplicar();
+    });
+    lt.append(ct, document.createTextNode(" (Seleccionar todo)"));
+    lista.appendChild(lt);
+
+    visibles.forEach(k => {
+      const l = document.createElement("label"); l.className = "msel-item";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = sel.has(k);
+      cb.addEventListener("change", () => {
+        if (cb.checked) sel.add(k); else sel.delete(k);
+        ct.checked = visibles.every(x => sel.has(x));
+        aplicar();
+      });
+      l.append(cb, document.createTextNode(" " + etiquetaClave(c, k)));
+      lista.appendChild(l);
+    });
+  };
+
+  buscador.addEventListener("input", () => { filtroTxt = buscador.value.trim().toLowerCase(); pintaLista(); });
+  pintaLista();
+  wrap.appendChild(panel);
+}
+
+// Cerrar el panel al clicar fuera
+document.addEventListener("click", cerrarPaneles);
+
+// exceptCol: ignora el filtro de esa columna (para recalcular su propia lista de valores)
+function pasaFiltros(row, exceptCol = null) {
   for (const c in filtros) {
-    const sel = filtros[c]; if (!sel) continue;
     const ci = Number(c);
-    if (ci === G.idx.SINO2) {
-      const v = norm(row[G.idx.SINO2]);
-      if (sel === "__pend" && !(esRevisable(row) && v !== "ok" && v !== "nok")) return false;
-      if (sel === "ok" && v !== "ok") return false;
-      if (sel === "nok" && v !== "nok") return false;
-    } else if (ci === G.idx.WAR) {
-      if ((warSi(row) ? "si" : "no") !== sel) return false;
-    } else if ((row[ci] || "") !== sel) return false;
+    if (ci === exceptCol) continue;
+    const set = filtros[c];
+    if (!set) continue;
+    if (!set.has(claveFila(row, ci))) return false;
   }
   return true;
 }

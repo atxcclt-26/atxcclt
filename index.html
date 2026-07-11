@@ -26,8 +26,22 @@
 
     #filtros { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; margin: 12px 0 16px; }
     #filtros .f { display: flex; flex-direction: column; font-size: .72rem; color: #666; gap: 2px; }
-    #filtros select { padding: 5px 6px; min-width: 120px; }
     #btnLimpiar { padding: 6px 12px; }
+
+    /* Filtros multiselección estilo Excel */
+    #filtros .msel { position: relative; }
+    .msel-btn { padding: 5px 8px; min-width: 120px; max-width: 200px; overflow: hidden; text-overflow: ellipsis;
+                text-align: left; background: #fff; border: 1px solid #bbb; border-radius: 4px; cursor: pointer; font-size: .8rem; }
+    .msel-btn.activo { border-color: #1a7f37; background: #eaf6ee; font-weight: 600; }
+    .msel-panel { position: absolute; top: 100%; left: 0; z-index: 50; margin-top: 2px; background: #fff;
+                  border: 1px solid #bbb; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+                  padding: 8px; min-width: 200px; max-width: 320px; }
+    .msel-busca { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 4px 6px; }
+    .msel-lista { max-height: 260px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+    .msel-item { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: #222;
+                 padding: 3px 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    .msel-item:hover { background: #f2f2f2; }
+    .msel-todo { border-bottom: 1px solid #e2e2e2; margin-bottom: 4px; padding-bottom: 5px; font-weight: 600; }
 
     .tabla-wrap { overflow: auto; }
     table { border-collapse: collapse; width: 100%; font-size: .9rem; }
@@ -80,6 +94,6 @@
   </section>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607101200"></script>
+  <script src="app.js?v=202607101800"></script>
 </body>
 </html>
