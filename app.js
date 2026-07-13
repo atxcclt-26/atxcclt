@@ -247,10 +247,13 @@ function celda(row, c, idx) {
   }
   if (c === G.idx.EUR) {
     // Celda combinada: "<€ con 2 decimales> EUR - <VALOR ORIGINAL> <MONEDA>". VALOR ORIGINAL está oculto como columna.
+    // Si MONEDA es EUR o VALOR ORIGINAL es 0 (o vacío), solo se muestra "<€> EUR".
     const eur = fmt2(row[c]);
     const vo = (row[G.idx.VALOR] || "").trim();
     const mon = (row[G.idx.MON] || "").trim();
-    const extra = vo !== "" ? ` - ${vo}${mon ? " " + mon : ""}` : "";
+    const voNum = parseNum(vo);
+    const soloEur = up(mon) === "EUR" || vo === "" || voNum === 0;
+    const extra = soloEur ? "" : ` - ${vo}${mon ? " " + mon : ""}`;
     return `<td>${escapeHtml(eur + " EUR" + extra)}</td>`;
   }
   if (c === G.idx.MERC) {
