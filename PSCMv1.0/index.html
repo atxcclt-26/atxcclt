@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>PSCM · Listas de tareas</title>
+
+  <!-- PWA / icono en pantalla de inicio (iPhone) -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1a7f37" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="PSCM" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 18px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    h1 { font-size: 1.35rem; margin: 0; }
+    .build { color: #999; font-size: .72rem; margin: 4px 0 0; }
+    #estado-carga { margin: 14px 0; color: #444; }
+    #estado-carga.error { color: #b00020; }
+
+    /* Vistas: solo una visible */
+    .vista { display: none; }
+    body.logged-in .vista.activa { display: block; }
+
+    /* --- Menú inicial --- */
+    #menu .opciones { display: flex; flex-direction: column; gap: 14px; max-width: 420px; margin-top: 18px; }
+    #menu button { padding: 16px 18px; font-size: 1.05rem; font-weight: 600; border: 0; border-radius: 10px; cursor: pointer; color: #fff; text-align: left; }
+    #btnNueva { background: #1a7f37; }
+    #btnVer   { background: #2b6cb0; }
+    #menu button:disabled { opacity: .4; cursor: default; }
+
+    /* --- Lista de ejecuciones existentes --- */
+    #ejecuciones ul { list-style: none; padding: 0; margin: 14px 0; max-width: 420px; }
+    #ejecuciones li { margin: 8px 0; }
+    #ejecuciones li button { width: 100%; padding: 12px 14px; font-size: 1rem; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; text-align: left; display: flex; justify-content: space-between; gap: 10px; }
+    #ejecuciones li button .nombre { font-weight: 600; }
+    #ejecuciones li button .fecha { color: #666; }
+
+    /* --- Árbol de tareas --- */
+    #progreso { color: #555; font-size: .9rem; margin: 10px 0; }
+    .piso { margin: 18px 0 6px; font-size: 1.1rem; font-weight: 700; border-bottom: 2px solid #1a7f37; padding-bottom: 3px; }
+    .zona { margin: 10px 0 4px 8px; font-weight: 700; color: #2b6cb0; }
+    .tarea { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+             margin: 4px 0 4px 20px; padding: 8px 10px; border: 1px solid #e2e2e2; border-radius: 8px; }
+    .tarea.hecha { background: #d5efdc; border-color: #b5dfc2; }
+    .tarea .texto { flex: 1; }
+    .tarea .hora { color: #777; font-size: .72rem; margin-left: 8px; white-space: nowrap; }
+    .tarea button { padding: 8px 14px; border: 0; border-radius: 8px; color: #fff; font-weight: 600; font-size: .9rem; cursor: pointer; white-space: nowrap; }
+    .tarea button.check { background: #1a7f37; }
+    .tarea button.foto  { background: #2b6cb0; }
+    .tarea.hecha button.check { background: #6b7280; }
+    .tarea button:disabled { opacity: .4; cursor: default; }
+    .tarea a.ver { font-size: .8rem; margin-left: 6px; white-space: nowrap; }
+
+    .barra { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+    .barra button { padding: 8px 14px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; font-weight: 600; }
+    h2 { font-size: 1.1rem; margin: 16px 0 4px; }
+    .vacio { color: #777; margin: 12px 0; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>PSCM</h1>
+    <button id="loginBtn" type="button">Iniciar sesión</button>
+  </header>
+  <p class="build">Generado el 15/07/2026</p>
+
+  <p id="estado-carga">Inicia sesión para empezar.</p>
+
+  <!-- Vista 1: menú inicial -->
+  <section id="menu" class="vista">
+    <h2>¿Qué quieres hacer?</h2>
+    <div class="opciones">
+      <button id="btnNueva" type="button">▶ Realizar una lista completa</button>
+      <button id="btnVer" type="button">📂 Visualizar una lista existente</button>
+    </div>
+  </section>
+
+  <!-- Vista 2: ejecuciones existentes -->
+  <section id="ejecuciones" class="vista">
+    <div class="barra"><button id="btnVolver1" type="button">← Volver</button></div>
+    <h2>Listas existentes</h2>
+    <ul id="listaEjecuciones"></ul>
+  </section>
+
+  <!-- Vista 3: árbol de tareas de una ejecución -->
+  <section id="arbol" class="vista">
+    <div class="barra"><button id="btnVolver2" type="button">← Volver al menú</button></div>
+    <h2 id="tituloEjecucion"></h2>
+    <div id="progreso"></div>
+    <div id="tareas"></div>
+  </section>
+
+  <!-- Input oculto para hacer fotos (cámara trasera) -->
+  <input type="file" id="fotoInput" accept="image/*" capture="environment" style="display:none" />
+
+  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
+  <script src="app.js?v=202607151000"></script>
+</body>
+</html>
