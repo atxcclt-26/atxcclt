@@ -35,6 +35,11 @@ const G = {
   plantilla: [],           // [[piso, zona, accion], ...] leída de pscm.csv
   ejecucion: null          // { nombre, subfolderId, stateName, rows: [[piso,zona,accion,estado,foto,hora],...] }
 };
+// Estado de la interfaz del árbol
+const UI = {
+  verHechas: true,         // selector "Ver realizadas SÍ/NO"
+  editables: new Set()     // idx de tareas hechas desbloqueadas con "Editar"
+};
 let inicializado = false;
 let guardando = false, guardarDeNuevo = false;
 let fotoPendiente = null;  // idx de la fila cuya foto se está pidiendo
@@ -182,6 +187,15 @@ async function listarEjecuciones() {
     .sort((a, b) => b.localeCompare(a));
 }
 
+// Lista las fotos (imágenes) de la carpeta de la ejecución, con miniaturas
+async function listarFotos(nombre) {
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(nombre)}:/children?$expand=thumbnails&$top=200`);
+  if (!res.ok) throw new Error("listar fotos → " + res.status);
+  return ((await res.json()).value || [])
+    .filter(it => it.file && (/^image\//.test(it.file.mimeType || "") || /\.(jpe?g|png|heic|webp)$/i.test(it.name)))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 // ---------- Guardado del estado de la ejecución (autosave con reintento en cola) ----------
 async function guardarEstado() {
   const e = G.ejecucion;
@@ -206,6 +220,11 @@ async function cargarPlantilla() {
 }
 
 // ---------- Flujos ----------
+function resetUiArbol() {
+  UI.verHechas = true;
+  UI.editables.clear();
+  cerrarCarrete();
+}
 async function nuevaEjecucion() {
   try {
     setEstado("Creando nueva lista…");
@@ -217,6 +236,7 @@ async function nuevaEjecucion() {
     G.ejecucion = { nombre, subfolderId: sub.id, stateName: `${nombre}.csv`, rows };
     await guardarEstado();
     setEstado(`Lista ${nombreLegible(nombre)} creada.`);
+    resetUiArbol();
     renderArbol();
     mostrarVista("arbol");
   } catch (e) { setEstado("Error: " + e.message, true); }
@@ -254,6 +274,7 @@ async function abrirEjecucion(nombre) {
     });
     G.ejecucion = { nombre, subfolderId: null, stateName: `${nombre}.csv`, rows };
     setEstado(`Lista ${nombreLegible(nombre)} cargada (${rows.length} tareas).`);
+    resetUiArbol();
     renderArbol();
     mostrarVista("arbol");
   } catch (e) { setEstado("Error abriendo la lista: " + e.message, true); }
@@ -263,31 +284,48 @@ async function abrirEjecucion(nombre) {
 function renderArbol() {
   const e = G.ejecucion;
   document.getElementById("tituloEjecucion").textContent = `Lista ${nombreLegible(e.nombre)}  (${e.nombre})`;
+  document.getElementById("btnVerHechas").textContent = `Ver realizadas: ${UI.verHechas ? "SÍ" : "NO"}`;
   const cont = document.getElementById("tareas");
   cont.innerHTML = "";
   let pisoAct = null, zonaAct = null;
+  let pendPiso = false, pendZona = false;   // cabeceras pendientes de pintar (solo si hay tarea visible)
   e.rows.forEach((row, idx) => {
     const [piso, zona, accion, estado, foto] = row;
-    if (piso !== pisoAct) {
-      pisoAct = piso; zonaAct = null;
-      const d = document.createElement("div"); d.className = "piso"; d.textContent = piso || "(sin piso)";
-      cont.appendChild(d);
-    }
-    if (zona !== zonaAct) {
-      zonaAct = zona;
-      const d = document.createElement("div"); d.className = "zona"; d.textContent = zona || "(sin zona)";
-      cont.appendChild(d);
-    }
+    if (piso !== pisoAct) { pisoAct = piso; zonaAct = null; pendPiso = true; }
+    if (zona !== zonaAct) { zonaAct = zona; pendZona = true; }
     const hecha = norm(estado) === "ok";
+    if (hecha && !UI.verHechas) return;     // ocultar realizadas
+    if (pendPiso) {
+      const d = document.createElement("div"); d.className = "piso"; d.textContent = piso || "(sin piso)";
+      cont.appendChild(d); pendPiso = false;
+    }
+    if (pendZona) {
+      const d = document.createElement("div"); d.className = "zona"; d.textContent = zona || "(sin zona)";
+      cont.appendChild(d); pendZona = false;
+    }
     const conFoto = esFoto(accion);
+    const editable = UI.editables.has(idx);
     const d = document.createElement("div");
     d.className = "tarea" + (hecha ? " hecha" : "");
-    let boton;
-    if (conFoto) boton = `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 ${hecha ? "Repetir" : "Foto"}</button>`;
-    else boton = `<button type="button" class="check" data-idx="${idx}" data-act="check">${hecha ? "↩ Quitar" : "✓ Hecho"}</button>`;
+    let botones;
+    if (!hecha) {
+      // Pendiente: acción directa
+      botones = conFoto
+        ? `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 Foto</button>`
+        : `<button type="button" class="check" data-idx="${idx}" data-act="check">✓ Hecho</button>`;
+    } else if (!editable) {
+      // Hecha y bloqueada: solo "Editar"
+      botones = `<button type="button" class="edit" data-idx="${idx}" data-act="editar">✎ Editar</button>`;
+    } else {
+      // Hecha y desbloqueada: acción de edición + cancelar
+      botones = (conFoto
+        ? `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 Repetir</button>`
+        : `<button type="button" class="check deshacer" data-idx="${idx}" data-act="check">↩ Quitar</button>`)
+        + `<button type="button" class="cancel" data-idx="${idx}" data-act="cancelar">✕</button>`;
+    }
     const ver = hecha && foto ? ` <a class="ver" href="#" data-idx="${idx}" data-act="ver">ver foto</a>` : "";
     const hora = row[5] ? `<span class="hora">${escapeHtml(row[5])}</span>` : "";
-    d.innerHTML = `<span class="texto">${escapeHtml(accion)}${ver}${hora}</span>${boton}`;
+    d.innerHTML = `<span class="texto">${escapeHtml(accion)}${ver}${hora}</span><span class="botones">${botones}</span>`;
     cont.appendChild(d);
   });
   actualizarProgreso();
@@ -306,14 +344,18 @@ function marcar(idx, estado, foto) {
   row[3] = estado;
   if (foto !== undefined) row[4] = foto;
   row[5] = estado === "OK" ? new Date().toTimeString().slice(0, 8) : "";
+  UI.editables.delete(idx);   // tras editar, la tarea vuelve a quedar bloqueada
   renderArbol();
   programarGuardado();
 }
 function onCheck(idx) {
   const hecha = norm(G.ejecucion.rows[idx][3]) === "ok";
-  marcar(idx, hecha ? "" : "OK");   // toggle: permite deshacer un check por error
+  if (hecha && !UI.editables.has(idx)) return;   // hecha y bloqueada: no editable
+  marcar(idx, hecha ? "" : "OK");                // toggle solo en modo edición
 }
 function pedirFoto(idx) {
+  const hecha = norm(G.ejecucion.rows[idx][3]) === "ok";
+  if (hecha && !UI.editables.has(idx)) return;   // hecha y bloqueada: no editable
   fotoPendiente = idx;
   const inp = document.getElementById("fotoInput");
   inp.value = "";
@@ -357,6 +399,40 @@ async function verFoto(idx) {
   } catch (err) { setEstado("No pude abrir la foto: " + err.message, true); }
 }
 
+// ---------- Carrete de fotos de la ejecución ----------
+async function abrirCarrete() {
+  const e = G.ejecucion;
+  if (!e) return;
+  try {
+    setEstado("Cargando carrete…");
+    const fotos = await listarFotos(e.nombre);
+    const grid = document.getElementById("carreteGrid");
+    grid.innerHTML = "";
+    if (!fotos.length) {
+      grid.innerHTML = `<p class="vacio">Todavía no hay fotos en esta lista.</p>`;
+    } else {
+      fotos.forEach(it => {
+        const th = it.thumbnails && it.thumbnails[0];
+        const mini = th && (th.large || th.medium || th.small);
+        const full = it["@microsoft.graph.downloadUrl"] || it.webUrl || "#";
+        const a = document.createElement("a");
+        a.className = "fotoRoll";
+        a.href = full; a.target = "_blank"; a.rel = "noopener";
+        a.innerHTML = (mini ? `<img src="${mini.url}" alt="${escapeHtml(it.name)}" loading="lazy" />`
+                            : `<span class="sinMini">🖼</span>`)
+                    + `<span class="pie">${escapeHtml(it.name)}</span>`;
+        grid.appendChild(a);
+      });
+    }
+    document.getElementById("carrete").hidden = false;
+    setEstado(`Carrete: ${fotos.length} foto(s).`);
+  } catch (err) { setEstado("Error cargando el carrete: " + err.message, true); }
+}
+function cerrarCarrete() {
+  const c = document.getElementById("carrete");
+  if (c) { c.hidden = true; document.getElementById("carreteGrid").innerHTML = ""; }
+}
+
 // ---------- Inicio tras login ----------
 async function iniciar() {
   if (inicializado) return;
@@ -389,6 +465,7 @@ function updateAuthUI() {
         loginBtn.disabled = false; inicializado = false; G.ejecucion = null;
         document.getElementById("tareas").innerHTML = "";
         document.getElementById("listaEjecuciones").innerHTML = "";
+        cerrarCarrete();
         mostrarVista("");
         setEstado("Inicia sesión para empezar.");
         updateAuthUI();
@@ -418,7 +495,10 @@ function resetMsal() {
 document.getElementById("btnNueva").addEventListener("click", nuevaEjecucion);
 document.getElementById("btnVer").addEventListener("click", verEjecuciones);
 document.getElementById("btnVolver1").addEventListener("click", () => mostrarVista("menu"));
-document.getElementById("btnVolver2").addEventListener("click", () => { G.ejecucion = null; mostrarVista("menu"); setEstado("Elige una opción."); });
+document.getElementById("btnVolver2").addEventListener("click", () => { G.ejecucion = null; cerrarCarrete(); mostrarVista("menu"); setEstado("Elige una opción."); });
+document.getElementById("btnVerHechas").addEventListener("click", () => { UI.verHechas = !UI.verHechas; renderArbol(); });
+document.getElementById("btnCarrete").addEventListener("click", abrirCarrete);
+document.getElementById("btnCerrarCarrete").addEventListener("click", cerrarCarrete);
 document.getElementById("listaEjecuciones").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-nombre]");
   if (b) abrirEjecucion(b.dataset.nombre);
@@ -431,6 +511,8 @@ document.getElementById("tareas").addEventListener("click", (e) => {
   if (el.dataset.act === "check") onCheck(idx);
   else if (el.dataset.act === "foto") pedirFoto(idx);
   else if (el.dataset.act === "ver") verFoto(idx);
+  else if (el.dataset.act === "editar") { UI.editables.add(idx); renderArbol(); }
+  else if (el.dataset.act === "cancelar") { UI.editables.delete(idx); renderArbol(); }
 });
 document.getElementById("fotoInput").addEventListener("change", (e) => onFotoElegida(e.target.files[0]));
 
@@ -442,4 +524,4 @@ document.getElementById("fotoInput").addEventListener("change", (e) => onFotoEle
   } catch (e) { console.error(e); }
   updateAuthUI();
 })();
-window.pscmAuth = { msalInstance, getToken, resetMsal, G };
+window.pscmAuth = { msalInstance, getToken, resetMsal, G, UI };

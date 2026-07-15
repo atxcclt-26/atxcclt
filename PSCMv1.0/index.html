@@ -56,6 +56,18 @@
     .tarea.hecha button.check { background: #6b7280; }
     .tarea button:disabled { opacity: .4; cursor: default; }
     .tarea a.ver { font-size: .8rem; margin-left: 6px; white-space: nowrap; }
+    .tarea .botones { display: flex; gap: 6px; align-items: center; }
+    .tarea button.edit   { background: #6b7280; }
+    .tarea button.cancel { background: #9ca3af; padding: 8px 10px; }
+    .tarea button.deshacer { background: #b45309; }
+
+    /* Carrete de fotos */
+    #carrete { border: 1px solid #d0d7de; border-radius: 10px; padding: 10px; margin: 10px 0; background: #fafbfc; }
+    #carreteGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+    #carreteGrid .fotoRoll { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: #444; }
+    #carreteGrid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #e2e2e2; }
+    #carreteGrid .sinMini { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; font-size: 2rem; background: #eee; border-radius: 8px; }
+    #carreteGrid .pie { font-size: .68rem; word-break: break-all; }
 
     .barra { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
     .barra button { padding: 8px 14px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; font-weight: 600; }
@@ -91,9 +103,17 @@
 
   <!-- Vista 3: árbol de tareas de una ejecución -->
   <section id="arbol" class="vista">
-    <div class="barra"><button id="btnVolver2" type="button">← Volver al menú</button></div>
+    <div class="barra">
+      <button id="btnVolver2" type="button">← Volver al menú</button>
+      <button id="btnVerHechas" type="button">Ver realizadas: SÍ</button>
+      <button id="btnCarrete" type="button">🎞 Carrete</button>
+    </div>
     <h2 id="tituloEjecucion"></h2>
     <div id="progreso"></div>
+    <div id="carrete" hidden>
+      <div class="barra"><button id="btnCerrarCarrete" type="button">✕ Cerrar carrete</button></div>
+      <div id="carreteGrid"></div>
+    </div>
     <div id="tareas"></div>
   </section>
 
@@ -101,6 +121,6 @@
   <input type="file" id="fotoInput" accept="image/*" capture="environment" style="display:none" />
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607151000"></script>
+  <script src="app.js?v=202607151100"></script>
 </body>
 </html>
