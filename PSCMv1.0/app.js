@@ -33,6 +33,7 @@ const G = {
   driveId: null,           // drive de la carpeta (null = mi OneDrive; con valor = carpeta compartida)
   folderId: null,          // id de ZZZ_SG_pscm
   plantilla: [],           // [[piso, zona, accion], ...] leída de pscm.csv
+  listaHoy: null,          // nombre YYMMDDHHMM de la lista ya creada hoy (o null)
   ejecucion: null          // { nombre, subfolderId, stateName, rows: [[piso,zona,accion,estado,foto,hora],...] }
 };
 // Estado de la interfaz del árbol
@@ -67,6 +68,19 @@ function nombreEjecucion(d = new Date()) {
 }
 function nombreLegible(n) { // "2607151032" → "15/07/26 10:32"
   return `${n.slice(4, 6)}/${n.slice(2, 4)}/${n.slice(0, 2)} ${n.slice(6, 8)}:${n.slice(8, 10)}`;
+}
+function hoyPrefijo() { // YYMMDD de hoy (hora local)
+  const p = n => String(n).padStart(2, "0"); const d = new Date();
+  return String(d.getFullYear()).slice(2) + p(d.getMonth() + 1) + p(d.getDate());
+}
+function fechaLarga(n) { // "2607151032" → "15/07/2026 10:32"
+  return `${n.slice(4, 6)}/${n.slice(2, 4)}/20${n.slice(0, 2)} ${n.slice(6, 8)}:${n.slice(8, 10)}`;
+}
+function haceDias(n) { // días naturales transcurridos desde la ejecución
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const f = new Date(2000 + Number(n.slice(0, 2)), Number(n.slice(2, 4)) - 1, Number(n.slice(4, 6)));
+  const dias = Math.round((hoy - f) / 86400000);
+  return dias <= 0 ? "hoy" : dias === 1 ? "ayer" : `hace ${dias} días`;
 }
 
 // ---------- CSV (";" — mismo parser que la app hermana) ----------
@@ -220,6 +234,29 @@ async function cargarPlantilla() {
 }
 
 // ---------- Flujos ----------
+// Límite: una lista por día natural. Si ya existe, el botón pasa a "Abrir lista en marcha".
+async function actualizarMenu() {
+  const btn = document.getElementById("btnNueva");
+  btn.disabled = true;
+  try {
+    const nombres = await listarEjecuciones();
+    G.listaHoy = nombres.find(n => n.startsWith(hoyPrefijo())) || null;
+  } catch (e) { console.warn("No pude comprobar la lista de hoy:", e); G.listaHoy = null; }
+  btn.textContent = G.listaHoy
+    ? `▶ Abrir lista en marcha (creada a las ${G.listaHoy.slice(6, 8)}:${G.listaHoy.slice(8, 10)})`
+    : "▶ Realizar una lista completa";
+  btn.disabled = false;
+}
+function volverAlMenu() {
+  G.ejecucion = null; cerrarCarrete();
+  mostrarVista("menu");
+  setEstado("Elige una opción.");
+  actualizarMenu();
+}
+function onNueva() {
+  if (G.listaHoy) abrirEjecucion(G.listaHoy);
+  else nuevaEjecucion();
+}
 function resetUiArbol() {
   UI.verHechas = true;
   UI.editables.clear();
@@ -228,12 +265,17 @@ function resetUiArbol() {
 async function nuevaEjecucion() {
   try {
     setEstado("Creando nueva lista…");
+    // Doble comprobación del límite diario (por si el menú estaba desactualizado)
+    const previas = await listarEjecuciones();
+    const deHoy = previas.find(n => n.startsWith(hoyPrefijo()));
+    if (deHoy) { G.listaHoy = deHoy; return abrirEjecucion(deHoy); }
     await cargarPlantilla();                       // siempre la plantilla actual
     const nombre = nombreEjecucion();
     const sub = await crearSubcarpeta(nombre);
     // Estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA — congela la estructura con la que se ejecuta
     const rows = G.plantilla.map(t => [t[0], t[1], t[2], "", "", ""]);
     G.ejecucion = { nombre, subfolderId: sub.id, stateName: `${nombre}.csv`, rows };
+    G.listaHoy = nombre;
     await guardarEstado();
     setEstado(`Lista ${nombreLegible(nombre)} creada.`);
     resetUiArbol();
@@ -254,7 +296,7 @@ async function verEjecuciones() {
       nombres.forEach(n => {
         const li = document.createElement("li");
         li.innerHTML = `<button type="button" data-nombre="${n}">
-                          <span class="nombre">${n}</span><span class="fecha">${nombreLegible(n)}</span>
+                          <span class="nombre">${fechaLarga(n)}</span><span class="fecha">(${haceDias(n)})</span>
                         </button>`;
         ul.appendChild(li);
       });
@@ -441,6 +483,7 @@ async function iniciar() {
   try {
     const token = await getToken(fileScopes);
     if (!(await localizarCarpeta(token))) { inicializado = false; return; }
+    await actualizarMenu();
     setEstado("Carpeta localizada. Elige una opción.");
     mostrarVista("menu");
   } catch (e) {
@@ -492,10 +535,10 @@ function resetMsal() {
 }
 
 // ---------- Arranque / eventos ----------
-document.getElementById("btnNueva").addEventListener("click", nuevaEjecucion);
+document.getElementById("btnNueva").addEventListener("click", onNueva);
 document.getElementById("btnVer").addEventListener("click", verEjecuciones);
-document.getElementById("btnVolver1").addEventListener("click", () => mostrarVista("menu"));
-document.getElementById("btnVolver2").addEventListener("click", () => { G.ejecucion = null; cerrarCarrete(); mostrarVista("menu"); setEstado("Elige una opción."); });
+document.getElementById("btnVolver1").addEventListener("click", volverAlMenu);
+document.getElementById("btnVolver2").addEventListener("click", volverAlMenu);
 document.getElementById("btnVerHechas").addEventListener("click", () => { UI.verHechas = !UI.verHechas; renderArbol(); });
 document.getElementById("btnCarrete").addEventListener("click", abrirCarrete);
 document.getElementById("btnCerrarCarrete").addEventListener("click", cerrarCarrete);
