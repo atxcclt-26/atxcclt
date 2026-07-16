@@ -24,7 +24,7 @@ const REDIRECT_PAGE =
   "https://atxcclt-26.github.io/atxcclt/Tuppers/";
 const msalConfig = {
   auth: {
-    clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
+    clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696",
     redirectUri: REDIRECT_PAGE
   },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
