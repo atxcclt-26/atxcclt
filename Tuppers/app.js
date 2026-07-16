@@ -20,7 +20,8 @@ const GRAPH = "https://graph.microsoft.com/v1.0";
 // =====================
 
 // Misma arquitectura de autenticación MSAL que la app de referencia.
-const REDIRECT_PAGE = window.location.origin + window.location.pathname;
+const REDIRECT_PAGE =
+  "https://atxcclt-26.github.io/atxcclt/Tuppers/";
 const msalConfig = {
   auth: {
     clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
