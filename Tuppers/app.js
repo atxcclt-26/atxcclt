@@ -12,6 +12,8 @@
 //
 // La web solo modifica: Ocupado, En q casa está, Ubicación, Comida, Url cookido, Gluten, Leche y Fecha preparación.
 // El resto de campos se modifica directamente en OneDrive.
+// Casas predefinidas: Comarruga, Castefa, 3, 4 (antes CM y CS; el CSV usa ya los nombres largos).
+// Gluten/Leche admiten: Sí, No, NPC/NPI.
 
 // ====== Ajustes ======
 const CARPETA_RAIZ = "ZZZ_SG_Tuppers";
@@ -24,7 +26,7 @@ const REDIRECT_PAGE =
   "https://atxcclt-26.github.io/atxcclt/Tuppers/";
 const msalConfig = {
   auth: {
-    clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696",
+    clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
     redirectUri: REDIRECT_PAGE
   },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
@@ -60,7 +62,9 @@ const COLUMNAS = [
 ];
 
 const CAMPOS_FIJOS = COLUMNAS.filter(c => !c.editable && !c.interno);
-const ORDEN_CASAS = new Map([["cm", 0], ["cs", 1], ["3", 2], ["4", 3]]);
+const CASAS_PREDEFINIDAS = ["Comarruga", "Castefa", "3", "4"];
+const OPCIONES_GLUTEN_LECHE = ["Sí", "No", "NPC/NPI"];
+const ORDEN_CASAS = new Map([["comarruga", 0], ["castefa", 1], ["3", 2], ["4", 3]]);
 const ORDEN_UBICACIONES = new Map([["congelador", 0], ["frigo", 1], ["fuera", 2], ["", 3]]);
 const CAMPOS_HISTORIAL = ["ocupado", "enQueCasaEsta", "ubicacion", "comida", "urlCookido", "gluten", "leche", "fechaPreparacion"];
 const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
@@ -339,6 +343,7 @@ async function cargarDatos() {
     G.registros = datos.map((fila, indice) => registroDesdeFila(fila, mapa, indice));
   }
   G.fotoCache.clear();
+  poblarFiltros();
   render();
   setEstado(`${G.registros.length} tupper(s) cargado(s).`);
 }
@@ -379,10 +384,16 @@ function leerFiltros() {
 }
 function coincideTexto(valor, filtro) { return !norm(filtro) || norm(valor).includes(norm(filtro)); }
 function coincideFecha(valor, filtro) { return !filtro || fechaParaInput(valor) === filtro; }
+function coincideExacto(valor, filtro) { return !filtro || norm(valor) === filtro; }
 function coincideSiNo(valor, filtro) {
   if (!filtro) return true;
   if (!norm(valor)) return false;
   return (esSi(valor) ? "si" : "no") === filtro;
+}
+// Botones rápidos de casa (Castefa / Comarruga): pueden estar activos ambos, uno o ninguno.
+const casasBoton = new Set();
+function coincideCasaBotones(registro) {
+  return !casasBoton.size || casasBoton.has(norm(registro.enQueCasaEsta));
 }
 function registroCoincide(registro, filtros) {
   return coincideTexto(registro.nombreTupper, filtros.nombreTupper)
@@ -392,12 +403,13 @@ function registroCoincide(registro, filtros) {
     && coincideFecha(registro.fechaCompraTupper, filtros.fechaCompraTupper)
     && coincideTexto(registro.fotoTupper, filtros.fotoTupper)
     && coincideSiNo(registro.ocupado, filtros.ocupado)
-    && coincideTexto(registro.enQueCasaEsta, filtros.enQueCasaEsta)
-    && coincideTexto(registro.ubicacion, filtros.ubicacion)
+    && coincideExacto(registro.enQueCasaEsta, filtros.enQueCasaEsta)
+    && coincideCasaBotones(registro)
+    && coincideExacto(registro.ubicacion, filtros.ubicacion)
     && coincideTexto(registro.comida, filtros.comida)
     && coincideTexto(registro.urlCookido, filtros.urlCookido)
-    && coincideSiNo(registro.gluten, filtros.gluten)
-    && coincideSiNo(registro.leche, filtros.leche)
+    && coincideExacto(registro.gluten, filtros.gluten)
+    && coincideExacto(registro.leche, filtros.leche)
     && coincideFecha(registro.fechaPreparacion, filtros.fechaPreparacion);
 }
 function compararCasaYUbicacion(a, b) {
@@ -416,7 +428,39 @@ function compararCasaYUbicacion(a, b) {
 }
 function limpiarFiltros() {
   Object.values(FILTROS).forEach(id => { $(id).value = ""; });
+  casasBoton.clear();
+  actualizarBotonesCasa();
   render();
+}
+
+// ---------- Combos dinámicos ----------
+function opcionesUnicas(key, base = []) {
+  const vistos = new Map();
+  base.forEach(v => vistos.set(norm(v), v));
+  G.registros.forEach(r => {
+    const v = String(r[key] || "").trim();
+    if (v && !vistos.has(norm(v))) vistos.set(norm(v), v);
+  });
+  return [...vistos.entries()]; // [valorNormalizado, etiqueta]
+}
+function rellenarSelect(id, entradas, textoTodos) {
+  const sel = $(id);
+  if (!sel) return;
+  const actual = sel.value;
+  sel.innerHTML = `<option value="">${textoTodos}</option>`
+    + entradas.map(([v, etiqueta]) => `<option value="${escapeHtml(v)}">${escapeHtml(etiqueta)}</option>`).join("");
+  if ([...sel.options].some(o => o.value === actual)) sel.value = actual;
+}
+function poblarFiltros() {
+  const casas = opcionesUnicas("enQueCasaEsta").sort((a, b) => {
+    const ra = ORDEN_CASAS.has(a[0]) ? ORDEN_CASAS.get(a[0]) : 100;
+    const rb = ORDEN_CASAS.has(b[0]) ? ORDEN_CASAS.get(b[0]) : 100;
+    return (ra - rb) || collator.compare(a[1], b[1]);
+  });
+  rellenarSelect("fCasa", casas, "Todas");
+  rellenarSelect("fUbicacion", opcionesUnicas("ubicacion", ["Congelador", "Frigo", "Fuera"]), "Todas");
+  rellenarSelect("fGluten", opcionesUnicas("gluten", OPCIONES_GLUTEN_LECHE), "Todos");
+  rellenarSelect("fLeche", opcionesUnicas("leche", OPCIONES_GLUTEN_LECHE), "Todos");
 }
 
 // ---------- Render ----------
@@ -424,9 +468,16 @@ function datoHtml(label, valor, fecha = false) {
   const texto = fecha ? fechaVisible(valor) : valorVisible(valor);
   return `<div class="dato"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(texto)}</dd></div>`;
 }
+function claseCasa(casa) {
+  const c = norm(casa);
+  if (c === "castefa") return "casa-castefa";
+  if (c === "comarruga") return "casa-comarruga";
+  if (c === "3" || c === "4") return "casa-naranja";
+  return "";
+}
 function tarjetaHtml(registro, indice) {
   const ocupado = esSi(registro.ocupado);
-  const clase = ocupado ? "ocupado" : "libre";
+  const clase = `${ocupado ? "ocupado" : "libre"} ${claseCasa(registro.enQueCasaEsta)}`;
   const comida = ocupado ? valorVisible(registro.comida, "Contenido sin indicar") : "Tupper libre";
   const foto = normalizarRutaFoto(registro.fotoTupper);
   const marcoFoto = foto
@@ -574,15 +625,14 @@ function abrirEditor(indice) {
 
   $("eOcupado").value = esSi(registro.ocupado) ? "si" : "no";
   const casa = String(registro.enQueCasaEsta || "").trim();
-  const predefinidas = ["CM", "CS", "3", "4"];
-  const predefinida = predefinidas.find(v => norm(v) === norm(casa));
+  const predefinida = CASAS_PREDEFINIDAS.find(v => norm(v) === norm(casa));
   $("eCasaTipo").value = predefinida || "otra";
   $("eCasaLibre").value = predefinida ? "" : casa;
   $("eUbicacion").value = ["Congelador", "Frigo", "Fuera"].find(v => norm(v) === norm(registro.ubicacion)) || "";
   $("eComida").value = registro.comida || "";
   $("eUrlCookido").value = registro.urlCookido || "";
-  $("eGluten").value = esSi(registro.gluten) ? "Sí" : (norm(registro.gluten) === "no" ? "No" : "");
-  $("eLeche").value = esSi(registro.leche) ? "Sí" : (norm(registro.leche) === "no" ? "No" : "");
+  $("eGluten").value = OPCIONES_GLUTEN_LECHE.find(v => norm(v) === norm(registro.gluten)) || "";
+  $("eLeche").value = OPCIONES_GLUTEN_LECHE.find(v => norm(v) === norm(registro.leche)) || "";
   $("eFechaPreparacion").value = fechaParaInput(registro.fechaPreparacion);
   prepararHistorial(registro);
   actualizarEditor();
@@ -646,6 +696,7 @@ async function guardarEditor(evento) {
   registro.historial = serializarHistorial([crearInstantanea(registro), ...historial].slice(0, 3));
   Object.assign(registro, nuevo);
 
+  poblarFiltros();
   render();
   try {
     await guardarDatos();
@@ -728,6 +779,26 @@ Object.values(FILTROS).forEach(id => {
   $(id).addEventListener("change", render);
 });
 $("btnLimpiar").addEventListener("click", limpiarFiltros);
+const BOTONES_CASA = [["btnCasaCastefa", "castefa"], ["btnCasaComarruga", "comarruga"]];
+function actualizarBotonesCasa() {
+  BOTONES_CASA.forEach(([id, casa]) => {
+    const btn = $(id);
+    if (btn) {
+      btn.classList.toggle("activo", casasBoton.has(casa));
+      btn.setAttribute("aria-pressed", casasBoton.has(casa) ? "true" : "false");
+    }
+  });
+}
+BOTONES_CASA.forEach(([id, casa]) => {
+  const btn = $(id);
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (casasBoton.has(casa)) casasBoton.delete(casa);
+    else casasBoton.add(casa);
+    actualizarBotonesCasa();
+    render();
+  });
+});
 $("btnRecargar").addEventListener("click", () => cargarDatos().catch(error => setEstado(`Error: ${error.message}`, true)));
 $("listaTuppers").addEventListener("click", event => {
   const editar = event.target.closest("[data-editar]");

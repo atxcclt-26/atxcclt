@@ -162,6 +162,14 @@
     }
     .tupper.ocupado { border-left: 6px solid #d88922; }
     .tupper.libre { border-left: 6px solid #4b9b69; }
+    .tupper.casa-castefa { background: #e8f1fb; }   /* azul suave */
+    .tupper.casa-comarruga { background: #e9f6ec; } /* verde suave */
+    .tupper.casa-naranja { background: #fdf0df; }   /* casas 3 y 4 */
+
+    .filtros-casa { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+    .boton-casa { border-width: 2px; }
+    .boton-casa.castefa.activo { background: #e8f1fb; border-color: #315f86; color: #1e3d58; }
+    .boton-casa.comarruga.activo { background: #e9f6ec; border-color: #256d4a; color: #185137; }
     .foto-marco {
       position: relative;
       width: 116px;
@@ -367,6 +375,11 @@
         <article><strong id="totalVisibles">0</strong><span>Visibles</span></article>
       </section>
 
+      <div class="filtros-casa" role="group" aria-label="Filtro rápido por casa">
+        <button id="btnCasaCastefa" class="boton boton-casa castefa" type="button" aria-pressed="false">Castefa</button>
+        <button id="btnCasaComarruga" class="boton boton-casa comarruga" type="button" aria-pressed="false">Comarruga</button>
+      </div>
+
       <div id="listaTuppers" aria-live="polite"></div>
 
       <details class="filtros">
@@ -382,17 +395,19 @@
             <label class="campo">Ocupado
               <select id="fOcupado"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
             </label>
-            <label class="campo">En q casa está<input id="fCasa" type="search" autocomplete="off" placeholder="CM, CS, 3, 4…" /></label>
+            <label class="campo">En q casa está
+              <select id="fCasa"><option value="">Todas</option></select>
+            </label>
             <label class="campo">Ubicación
-              <select id="fUbicacion"><option value="">Todas</option><option value="congelador">Congelador</option><option value="frigo">Frigo</option><option value="fuera">Fuera</option></select>
+              <select id="fUbicacion"><option value="">Todas</option></select>
             </label>
             <label class="campo">Comida<input id="fComida" type="search" autocomplete="off" /></label>
             <label class="campo">Url cookido<input id="fUrlCookido" type="search" autocomplete="off" /></label>
             <label class="campo">Gluten
-              <select id="fGluten"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
+              <select id="fGluten"><option value="">Todos</option></select>
             </label>
             <label class="campo">Leche
-              <select id="fLeche"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
+              <select id="fLeche"><option value="">Todos</option></select>
             </label>
             <label class="campo">Fecha preparación<input id="fFechaPreparacion" type="date" /></label>
           </div>
@@ -420,7 +435,7 @@
         </label>
         <label class="campo campo-editor">En q casa está
           <select id="eCasaTipo" required>
-            <option value="CM">CM</option><option value="CS">CS</option><option value="3">3</option><option value="4">4</option><option value="otra">Otra ubicación</option>
+            <option value="Comarruga">Comarruga</option><option value="Castefa">Castefa</option><option value="3">3</option><option value="4">4</option><option value="otra">Otra ubicación</option>
           </select>
         </label>
         <label id="campoCasaLibre" class="campo campo-editor ancho-completo" hidden>Otra casa
@@ -439,10 +454,10 @@
             <input id="eUrlCookido" type="url" maxlength="1000" placeholder="https://… (opcional)" inputmode="url" />
           </label>
           <label class="campo campo-editor">Gluten
-            <select id="eGluten"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
+            <select id="eGluten"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option><option value="NPC/NPI">NPC/NPI</option></select>
           </label>
           <label class="campo campo-editor">Leche
-            <select id="eLeche"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
+            <select id="eLeche"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option><option value="NPC/NPI">NPC/NPI</option></select>
           </label>
         </div>
       </fieldset>
@@ -463,6 +478,6 @@
   </dialog>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=2026071603"></script>
+  <script src="app.js?v=2026071610"></script>
 </body>
 </html>
