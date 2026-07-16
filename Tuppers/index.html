@@ -149,23 +149,23 @@
     label.campo textarea { resize: vertical; min-height: 76px; }
     .filtros-acciones { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 
-    #listaTuppers { display: flex; flex-direction: column; gap: 12px; }
+    #listaTuppers { display: flex; flex-direction: column; gap: 10px; }
     .tupper {
       display: grid;
-      grid-template-columns: 132px minmax(0, 1fr);
-      gap: 14px;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 12px;
       border: 1px solid var(--borde);
       border-radius: 14px;
       background: var(--panel);
-      padding: 12px;
+      padding: 10px;
       box-shadow: var(--sombra);
     }
-    .tupper.ocupado { border-left: 6px solid #d88922; background: linear-gradient(90deg, var(--ocupado), #fff 18%); }
-    .tupper.libre { border-left: 6px solid #4b9b69; background: linear-gradient(90deg, var(--libre), #fff 18%); }
+    .tupper.ocupado { border-left: 6px solid #d88922; }
+    .tupper.libre { border-left: 6px solid #4b9b69; }
     .foto-marco {
       position: relative;
-      width: 132px;
-      height: 132px;
+      width: 116px;
+      height: 116px;
       border-radius: 11px;
       overflow: hidden;
       border: 1px solid var(--borde);
@@ -181,50 +181,41 @@
       padding: 8px;
       color: var(--suave);
       text-align: center;
-      font-size: .8rem;
+      font-size: .78rem;
     }
-    .foto-marco button {
-      position: absolute;
-      inset: 0;
-      border: 0;
-      background: transparent;
-      padding: 0;
+    .foto-marco button { position: absolute; inset: 0; border: 0; background: transparent; padding: 0; }
+    .vista-previa-tupper { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+    .comida-principal {
+      margin: 0 0 4px;
+      font-weight: 800;
+      font-size: clamp(1.25rem, 3.7vw, 1.7rem);
+      line-height: 1.08;
+      overflow-wrap: anywhere;
     }
-    .cabecera-tupper { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-    .cabecera-tupper h3 { margin: 0; font-size: 1.15rem; }
-    .comida-principal { margin: 5px 0 0; font-weight: 700; font-size: 1rem; }
-    .comida-principal.vacio { color: var(--suave); font-weight: 400; }
-    .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 10px; }
+    .comida-principal.vacio { color: var(--suave); font-weight: 700; }
+    .vista-previa-tupper h3 { margin: 0; color: var(--suave); font-size: .9rem; font-weight: 700; }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
     .badge {
       display: inline-flex;
       align-items: center;
-      min-height: 28px;
+      min-height: 25px;
       border-radius: 999px;
-      padding: 4px 9px;
+      padding: 3px 8px;
       background: #edf2ef;
       color: #33423a;
-      font-size: .78rem;
+      font-size: .72rem;
       font-weight: 700;
     }
     .badge.estado { background: #eaf2f9; color: #264f70; }
-    .badge.fecha { background: #f4edf9; color: #65427d; }
-    .datos-tupper {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 8px 14px;
-      margin: 0;
-    }
-    .dato { min-width: 0; }
-    .dato dt { color: var(--suave); font-size: .7rem; font-weight: 700; margin-bottom: 2px; }
-    .dato dd { margin: 0; overflow-wrap: anywhere; }
     .editar {
-      flex: 0 0 auto;
+      margin-top: auto;
       border: 0;
-      border-radius: 9px;
+      border-radius: 8px;
       background: var(--secundario);
       color: #fff;
-      padding: 9px 12px;
+      padding: 8px 10px;
       font-weight: 700;
+      font-size: .82rem;
     }
     .vacio-lista {
       border: 1px dashed var(--borde);
@@ -234,10 +225,11 @@
       background: #fff;
       text-align: center;
     }
+    details.filtros { margin-top: 16px; }
 
     dialog {
-      width: min(720px, calc(100% - 24px));
-      max-height: calc(100vh - 32px);
+      width: min(760px, calc(100% - 18px));
+      max-height: min(96dvh, 900px);
       border: 0;
       border-radius: 14px;
       padding: 0;
@@ -247,80 +239,104 @@
     .dialogo-cabecera {
       position: sticky;
       top: 0;
-      z-index: 2;
+      z-index: 3;
       display: flex;
       justify-content: space-between;
       gap: 12px;
       align-items: center;
-      padding: 14px 16px;
+      padding: 11px 14px;
       border-bottom: 1px solid var(--borde);
       background: #fff;
     }
-    .dialogo-cabecera h2 { margin: 0; font-size: 1.1rem; }
+    .dialogo-cabecera h2 { margin: 0; font-size: 1.08rem; }
     .cerrar-dialogo { border: 0; background: transparent; font-size: 1.45rem; line-height: 1; }
-    #formEditor { padding: 14px 16px 18px; overflow: auto; }
+    #formEditor { padding: 10px 12px 0; overflow: auto; }
     .solo-lectura {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 8px 12px;
-      padding: 12px;
-      border-radius: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px 10px;
+      padding: 9px;
+      border-radius: 9px;
       background: #f5f7f6;
-      margin-bottom: 14px;
+      margin-bottom: 8px;
     }
-    .solo-lectura .dato dd { font-size: .9rem; }
+    .dato { min-width: 0; }
+    .dato dt { color: var(--suave); font-size: .66rem; font-weight: 700; margin-bottom: 1px; }
+    .dato dd { margin: 0; font-size: .82rem; overflow-wrap: anywhere; }
     fieldset { border: 0; margin: 0; padding: 0; }
-    fieldset:disabled { opacity: .52; }
-    .rejilla-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    fieldset:disabled { opacity: .5; }
+    .rejilla-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .ancho-completo { grid-column: 1 / -1; }
-    .nota-editor { margin: 8px 0 14px; color: var(--suave); font-size: .82rem; }
+    .nota-editor { margin: 5px 0 9px; color: var(--suave); font-size: .72rem; }
+    .campo-editor {
+      padding: 7px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+    }
+    .campo-destacado { background: #fff2cc; border-color: #efd480; }
+    #formEditor label.campo { font-size: .72rem; gap: 3px; }
+    #formEditor label.campo input, #formEditor label.campo select, #formEditor label.campo textarea {
+      min-height: 37px;
+      padding: 7px 8px;
+    }
+    #formEditor label.campo textarea { height: 37px; min-height: 37px; resize: none; }
+    .historial-control { margin-top: 10px; }
+    #btnHistorial { width: 100%; text-align: center; }
     .historial-usos {
-      margin: 0 0 16px;
-      padding: 12px;
+      margin: 8px 0 0;
+      padding: 9px;
       border: 1px solid var(--borde);
-      border-radius: 11px;
+      border-radius: 10px;
       background: #fbfcfb;
     }
-    .historial-usos h3 { margin: 0 0 10px; font-size: 1rem; }
-    #historialUsos { display: flex; flex-direction: column; gap: 9px; }
-    .uso-anterior {
-      border: 1px solid var(--borde);
-      border-radius: 9px;
-      padding: 10px;
-      background: #fff;
-    }
-    .uso-anterior-cabecera {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 8px;
-      font-size: .82rem;
-    }
+    .historial-usos h3 { margin: 0 0 8px; font-size: .92rem; }
+    #historialUsos { display: flex; flex-direction: column; gap: 7px; }
+    .uso-anterior { border: 1px solid var(--borde); border-radius: 8px; padding: 8px; background: #fff; }
+    .uso-anterior-cabecera { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: .75rem; }
     .uso-anterior-cabecera span { color: var(--suave); }
-    .datos-historial {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
-      gap: 7px 12px;
-      margin: 0;
-    }
+    .datos-historial { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 9px; margin: 0; }
     .datos-historial a { overflow-wrap: anywhere; }
-    .historial-vacio { margin: 0; color: var(--suave); font-size: .86rem; }
+    .historial-vacio { margin: 0; color: var(--suave); font-size: .82rem; }
     .dialogo-acciones {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
       display: flex;
       justify-content: flex-end;
       gap: 8px;
-      margin-top: 18px;
+      margin: 10px -12px 0;
+      padding: 9px 12px max(9px, env(safe-area-inset-bottom));
+      border-top: 1px solid var(--borde);
+      background: rgba(255,255,255,.97);
     }
 
     @media (max-width: 720px) {
-      .resumen { grid-template-columns: repeat(2, 1fr); }
-      .tupper { grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 10px; }
-      .foto-marco { width: 92px; height: 92px; }
-      .cabecera-tupper { flex-direction: column; }
-      .editar { width: 100%; }
-      .datos-tupper { grid-column: 1 / -1; }
-      .rejilla-editor { grid-template-columns: 1fr; }
-      .ancho-completo { grid-column: auto; }
+      main { padding-top: 10px; }
+      .resumen { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+      .resumen article { padding: 8px 5px; text-align: center; }
+      .resumen strong { font-size: 1.15rem; }
+      .resumen span { font-size: .64rem; }
+      .tupper { grid-template-columns: 88px minmax(0, 1fr); gap: 9px; padding: 8px; }
+      .foto-marco { width: 88px; height: 88px; }
+      .comida-principal { font-size: 1.2rem; }
+      .badges { margin: 6px 0; gap: 4px; }
+      .badge { font-size: .66rem; min-height: 23px; padding: 3px 6px; }
+      .editar { padding: 7px 9px; font-size: .76rem; }
+      dialog { width: calc(100% - 8px); max-height: 98dvh; border-radius: 11px; }
+      .dialogo-cabecera { padding: 9px 11px; }
+      #formEditor { padding: 8px 8px 0; }
+      .solo-lectura { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 7px; padding: 7px; }
+      .rejilla-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+      .campo-editor { padding: 5px; }
+      #formEditor label.campo input, #formEditor label.campo select, #formEditor label.campo textarea { min-height: 35px; padding: 6px; }
+      #formEditor label.campo textarea { height: 35px; min-height: 35px; }
+      .dialogo-acciones { margin-left: -8px; margin-right: -8px; padding-left: 8px; padding-right: 8px; }
+    }
+
+    @media (max-width: 380px) {
+      .tupper { grid-template-columns: 76px minmax(0, 1fr); }
+      .foto-marco { width: 76px; height: 76px; }
+      .comida-principal { font-size: 1.08rem; }
     }
   </style>
 </head>
@@ -328,7 +344,7 @@
   <header>
     <div>
       <h1>Gestión de tuppers</h1>
-      <p class="subtitulo">Inventario, contenido y ubicación</p>
+      <p class="subtitulo">Inventario, contenido, casa y ubicación</p>
     </div>
     <button id="loginBtn" type="button">Iniciar sesión</button>
   </header>
@@ -341,7 +357,6 @@
         <h2>Inventario de tuppers</h2>
         <div class="acciones">
           <button id="btnRecargar" class="boton" type="button">↻ Recargar</button>
-          <button id="btnLimpiar" class="boton" type="button">Limpiar filtros</button>
         </div>
       </div>
 
@@ -352,7 +367,9 @@
         <article><strong id="totalVisibles">0</strong><span>Visibles</span></article>
       </section>
 
-      <details class="filtros" open>
+      <div id="listaTuppers" aria-live="polite"></div>
+
+      <details class="filtros">
         <summary>Filtros del listado</summary>
         <div class="filtros-contenido">
           <div class="rejilla-filtros">
@@ -365,11 +382,12 @@
             <label class="campo">Ocupado
               <select id="fOcupado"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
             </label>
-            <label class="campo">Ubicación<input id="fUbicacion" type="search" autocomplete="off" placeholder="CM, CS, 3, 4…" /></label>
-            <label class="campo">Estado
-              <select id="fEstado"><option value="">Todos</option><option value="congelador">Congelador</option><option value="frigo">Frigo</option><option value="fuera">Fuera</option></select>
+            <label class="campo">En q casa está<input id="fCasa" type="search" autocomplete="off" placeholder="CM, CS, 3, 4…" /></label>
+            <label class="campo">Ubicación
+              <select id="fUbicacion"><option value="">Todas</option><option value="congelador">Congelador</option><option value="frigo">Frigo</option><option value="fuera">Fuera</option></select>
             </label>
             <label class="campo">Comida<input id="fComida" type="search" autocomplete="off" /></label>
+            <label class="campo">Url cookido<input id="fUrlCookido" type="search" autocomplete="off" /></label>
             <label class="campo">Gluten
               <select id="fGluten"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
             </label>
@@ -378,60 +396,64 @@
             </label>
             <label class="campo">Fecha preparación<input id="fFechaPreparacion" type="date" /></label>
           </div>
+          <div class="filtros-acciones">
+            <button id="btnLimpiar" class="boton" type="button">Limpiar filtros</button>
+          </div>
         </div>
       </details>
-
-      <div id="listaTuppers" aria-live="polite"></div>
     </section>
   </main>
 
   <dialog id="editor">
     <div class="dialogo-cabecera">
-      <h2 id="tituloEditor">Editar contenido</h2>
+      <h2 id="tituloEditor">Tupper</h2>
       <button id="btnCerrarEditor" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
     </div>
     <form id="formEditor" method="dialog">
       <input id="editorIndice" type="hidden" />
       <div id="datosFijos" class="solo-lectura"></div>
-      <p class="nota-editor">Los datos que definen el tupper son de solo lectura. Para cambiarlos, edita el fichero de OneDrive.</p>
-
-      <section class="historial-usos" aria-labelledby="tituloHistorial">
-        <h3 id="tituloHistorial">Tres usos anteriores</h3>
-        <div id="historialUsos"></div>
-      </section>
+      <p class="nota-editor">Los datos que definen el tupper son de solo lectura y se cambian en OneDrive.</p>
 
       <div class="rejilla-editor">
-        <label class="campo">Ocupado
+        <label class="campo campo-editor campo-destacado">Ocupado
           <select id="eOcupado" required><option value="no">No</option><option value="si">Sí</option></select>
         </label>
-        <label class="campo">Ubicación
-          <select id="eUbicacionTipo" required>
+        <label class="campo campo-editor">En q casa está
+          <select id="eCasaTipo" required>
             <option value="CM">CM</option><option value="CS">CS</option><option value="3">3</option><option value="4">4</option><option value="otra">Otra ubicación</option>
           </select>
         </label>
-        <label id="campoUbicacionLibre" class="campo ancho-completo" hidden>Ubicación libre
-          <input id="eUbicacionLibre" type="text" maxlength="120" />
+        <label id="campoCasaLibre" class="campo campo-editor ancho-completo" hidden>Otra casa
+          <input id="eCasaLibre" type="text" maxlength="120" />
         </label>
       </div>
 
       <fieldset id="contenidoEditor">
-        <div class="rejilla-editor" style="margin-top:12px">
-          <label class="campo">Estado
-            <select id="eEstado"><option value="">Selecciona</option><option value="Congelador">Congelador</option><option value="Frigo">Frigo</option><option value="Fuera">Fuera</option></select>
+        <div class="rejilla-editor" style="margin-top:6px">
+          <label class="campo campo-editor campo-destacado">Ubicación
+            <select id="eUbicacion"><option value="">Selecciona</option><option value="Congelador">Congelador</option><option value="Frigo">Frigo</option><option value="Fuera">Fuera</option></select>
           </label>
-          <label class="campo">Fecha preparación<input id="eFechaPreparacion" type="date" /></label>
-          <label class="campo ancho-completo">Comida<textarea id="eComida" maxlength="500"></textarea></label>
-          <label class="campo ancho-completo">Url cookido
-            <input id="eUrlCookido" type="url" maxlength="1000" placeholder="https://…" inputmode="url" />
+          <label class="campo campo-editor">Fecha preparación<input id="eFechaPreparacion" type="date" /></label>
+          <label class="campo campo-editor campo-destacado ancho-completo">Comida<input id="eComida" type="text" maxlength="500" /></label>
+          <label class="campo campo-editor ancho-completo">Url cookido
+            <input id="eUrlCookido" type="url" maxlength="1000" placeholder="https://… (opcional)" inputmode="url" />
           </label>
-          <label class="campo">Gluten
+          <label class="campo campo-editor">Gluten
             <select id="eGluten"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
           </label>
-          <label class="campo">Leche
+          <label class="campo campo-editor">Leche
             <select id="eLeche"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
           </label>
         </div>
       </fieldset>
+
+      <div class="historial-control">
+        <button id="btnHistorial" class="boton" type="button" aria-expanded="false" aria-controls="panelHistorial">Mostrar los 3 usos anteriores</button>
+      </div>
+      <section id="panelHistorial" class="historial-usos" aria-labelledby="tituloHistorial" hidden>
+        <h3 id="tituloHistorial">Tres usos anteriores</h3>
+        <div id="historialUsos"></div>
+      </section>
 
       <div class="dialogo-acciones">
         <button id="btnCancelarEditor" class="boton" type="button">Cancelar</button>
@@ -441,6 +463,6 @@
   </dialog>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=2026071602"></script>
+  <script src="app.js?v=2026071603"></script>
 </body>
 </html>

@@ -8,10 +8,9 @@
 //
 // Columnas de tuppers.csv (separador ";"):
 // Nombre tupper;Comentarios tupper;Material tapa;Material tupper;Fecha compra tupper;
-// Foto tupper;Ocupado;Ubicación;Estado;Comida;Url cookido;Gluten;Leche;Fecha preparación;Historial
+// Foto tupper;Ocupado;En q casa está;Ubicación;Comida;Url cookido;Gluten;Leche;Fecha preparación;Historial
 //
-// La web solo modifica: Ocupado, Ubicación, Estado, Comida, Url cookido, Gluten, Leche y Fecha preparación.
-// Historial es una columna interna con las tres instantáneas anteriores del tupper.
+// La web solo modifica: Ocupado, En q casa está, Ubicación, Comida, Url cookido, Gluten, Leche y Fecha preparación.
 // El resto de campos se modifica directamente en OneDrive.
 
 // ====== Ajustes ======
@@ -24,7 +23,7 @@ const GRAPH = "https://graph.microsoft.com/v1.0";
 const REDIRECT_PAGE = window.location.origin + window.location.pathname;
 const msalConfig = {
   auth: {
-    clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696",
+    clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
     redirectUri: REDIRECT_PAGE
   },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
@@ -49,22 +48,20 @@ const COLUMNAS = [
   { key: "fechaCompraTupper", label: "Fecha compra tupper", editable: false, aliases: ["fecha compra tupper"] },
   { key: "fotoTupper", label: "Foto tupper", editable: false, aliases: ["foto tupper", "foto"] },
   { key: "ocupado", label: "Ocupado", editable: true, aliases: ["ocupado"] },
-  { key: "ubicacion", label: "Ubicación", editable: true, aliases: ["ubicacion"] },
-  { key: "estado", label: "Estado", editable: true, aliases: ["estado"] },
+  { key: "enQueCasaEsta", label: "En q casa está", editable: true, aliases: ["en q casa esta", "en que casa esta", "casa"] },
+  { key: "ubicacion", label: "Ubicación", editable: true, aliases: ["ubicacion", "estado"] },
   { key: "comida", label: "Comida", editable: true, aliases: ["comida"] },
-  { key: "urlCookido", label: "Url cookido", editable: true, aliases: ["url cookido", "url cookidoo", "cookido", "cookidoo"] },
+  { key: "urlCookido", label: "Url cookido", editable: true, aliases: ["url cookido", "url cooked", "cookido"] },
   { key: "gluten", label: "Gluten", editable: true, aliases: ["gluten"] },
   { key: "leche", label: "Leche", editable: true, aliases: ["leche"] },
-  { key: "fechaPreparacion", label: "Fecha preparación", editable: true, aliases: ["fecha preparacion"] }
+  { key: "fechaPreparacion", label: "Fecha preparación", editable: true, aliases: ["fecha preparacion"] },
+  { key: "historial", label: "Historial", editable: false, interno: true, aliases: ["historial"] }
 ];
 
-const COLUMNA_HISTORIAL = { key: "_historialCsv", label: "Historial", aliases: ["historial"] };
-const COLUMNAS_CSV = [...COLUMNAS, COLUMNA_HISTORIAL];
-const CAMPOS_FIJOS = COLUMNAS.filter(c => !c.editable);
-const CAMPOS_EDITABLES = COLUMNAS.filter(c => c.editable);
-const CLAVES_USO = CAMPOS_EDITABLES.map(c => c.key);
-const ORDEN_UBICACIONES = new Map([["cm", 0], ["cs", 1], ["3", 2], ["4", 3]]);
-const ORDEN_ESTADOS = new Map([["congelador", 0], ["frigo", 1], ["fuera", 2], ["", 3]]);
+const CAMPOS_FIJOS = COLUMNAS.filter(c => !c.editable && !c.interno);
+const ORDEN_CASAS = new Map([["cm", 0], ["cs", 1], ["3", 2], ["4", 3]]);
+const ORDEN_UBICACIONES = new Map([["congelador", 0], ["frigo", 1], ["fuera", 2], ["", 3]]);
+const CAMPOS_HISTORIAL = ["ocupado", "enQueCasaEsta", "ubicacion", "comida", "urlCookido", "gluten", "leche", "fechaPreparacion"];
 const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
 
 const G = {
@@ -140,21 +137,6 @@ function hoyIso() {
   const p = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
-function ahoraIsoLocal() {
-  const d = new Date();
-  const p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-function fechaHoraVisible(valor) {
-  const v = String(valor || "").trim();
-  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (!m) return valorVisible(v);
-  return `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}`;
-}
-function urlHttpSegura(valor) {
-  const v = String(valor || "").trim();
-  return /^https?:\/\//i.test(v) ? v : "";
-}
 
 // ---------- CSV ----------
 function parseCSV(texto, delimitador = ";") {
@@ -191,65 +173,45 @@ function pareceCabecera(fila) {
   const coincidencias = COLUMNAS.filter(col => col.aliases.some(a => normalizadas.includes(normalizarCabecera(a)))).length;
   return coincidencias >= Math.min(5, COLUMNAS.length);
 }
-function crearMapaCabecera(cabecera, columnas, usarPosicionPorDefecto) {
+function crearMapaCabecera(cabecera) {
   const mapa = new Map();
   cabecera.forEach((nombre, indice) => mapa.set(normalizarCabecera(nombre), indice));
-  return columnas.map((col, indicePorDefecto) => {
-    for (const alias of col.aliases) {
+  const formatoNuevo = mapa.has(normalizarCabecera("En q casa está")) || mapa.has(normalizarCabecera("En que casa está"));
+
+  return COLUMNAS.map((col, indicePorDefecto) => {
+    let aliases = col.aliases;
+    // Compatibilidad con la versión anterior: "Ubicación" era la casa y "Estado" era Frigo/Congelador/Fuera.
+    if (col.key === "enQueCasaEsta" && !formatoNuevo) aliases = ["ubicacion", ...aliases];
+    if (col.key === "ubicacion") aliases = formatoNuevo ? ["ubicacion", "estado"] : ["estado", "ubicacion"];
+    for (const alias of aliases) {
       const encontrado = mapa.get(normalizarCabecera(alias));
       if (encontrado !== undefined) return encontrado;
     }
-    return usarPosicionPorDefecto ? indicePorDefecto : -1;
+    return indicePorDefecto;
   });
 }
-function normalizarHistorial(valor) {
+function parsearHistorial(valor) {
   if (!valor) return [];
   try {
-    const parsed = typeof valor === "string" ? JSON.parse(valor) : valor;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.slice(0, 3).map(item => ({
-      guardado: String(item.guardado || ""),
-      ocupado: canonSiNo(item.ocupado, false),
-      ubicacion: String(item.ubicacion || ""),
-      estado: String(item.estado || ""),
-      comida: String(item.comida || ""),
-      urlCookido: String(item.urlCookido || item.urlCookidoo || ""),
-      gluten: canonSiNo(item.gluten, true),
-      leche: canonSiNo(item.leche, true),
-      fechaPreparacion: String(item.fechaPreparacion || "")
-    }));
+    const lista = JSON.parse(valor);
+    return Array.isArray(lista) ? lista.filter(v => v && typeof v === "object").slice(0, 3) : [];
   } catch (error) {
     console.warn("Historial no válido; se ignora.", error);
     return [];
   }
 }
-function instantaneaUso(registro) {
-  return {
-    guardado: ahoraIsoLocal(),
-    ocupado: canonSiNo(registro.ocupado, false),
-    ubicacion: String(registro.ubicacion || "").trim(),
-    estado: String(registro.estado || "").trim(),
-    comida: String(registro.comida || "").trim(),
-    urlCookido: String(registro.urlCookido || "").trim(),
-    gluten: canonSiNo(registro.gluten, true),
-    leche: canonSiNo(registro.leche, true),
-    fechaPreparacion: String(registro.fechaPreparacion || "").trim()
-  };
-}
-function anadirAlHistorial(registro, usoAnterior) {
-  const historial = normalizarHistorial(registro._historial);
-  registro._historial = [instantaneaUso(usoAnterior), ...historial].slice(0, 3);
+function serializarHistorial(lista) {
+  return JSON.stringify((Array.isArray(lista) ? lista : []).slice(0, 3));
 }
 function registroDesdeFila(fila, mapaIndices, indiceOriginal) {
   const registro = { _indiceOriginal: indiceOriginal };
-  COLUMNAS.forEach((col, i) => registro[col.key] = String(mapaIndices[i] >= 0 ? (fila[mapaIndices[i]] ?? "") : "").trim());
-  const indiceHistorial = mapaIndices[COLUMNAS.length];
-  registro._historial = normalizarHistorial(indiceHistorial >= 0 ? fila[indiceHistorial] : "");
+  COLUMNAS.forEach((col, i) => registro[col.key] = String(fila[mapaIndices[i]] ?? "").trim());
   registro.ocupado = canonSiNo(registro.ocupado, false);
   registro.gluten = canonSiNo(registro.gluten, true);
   registro.leche = canonSiNo(registro.leche, true);
+  registro.historial = serializarHistorial(parsearHistorial(registro.historial));
   if (!esSi(registro.ocupado)) {
-    registro.estado = "";
+    registro.ubicacion = "";
     registro.comida = "";
     registro.urlCookido = "";
     registro.gluten = "";
@@ -259,14 +221,11 @@ function registroDesdeFila(fila, mapaIndices, indiceOriginal) {
   return registro;
 }
 function filasParaGuardar() {
-  const cabecera = COLUMNAS_CSV.map(c => c.label);
+  const cabecera = COLUMNAS.map(c => c.label);
   const datos = G.registros
     .slice()
     .sort((a, b) => a._indiceOriginal - b._indiceOriginal)
-    .map(registro => [
-      ...COLUMNAS.map(col => String(registro[col.key] ?? "").trim()),
-      JSON.stringify(normalizarHistorial(registro._historial))
-    ]);
+    .map(registro => COLUMNAS.map(col => String(registro[col.key] ?? "").trim()));
   return [cabecera, ...datos];
 }
 
@@ -373,8 +332,8 @@ async function cargarDatos() {
     G.registros = [];
   } else {
     const tieneCabecera = pareceCabecera(filas[0]);
-    const cabecera = tieneCabecera ? filas[0] : COLUMNAS_CSV.map(c => c.label);
-    const mapa = crearMapaCabecera(cabecera, COLUMNAS_CSV, !tieneCabecera);
+    const cabecera = tieneCabecera ? filas[0] : COLUMNAS.map(c => c.label);
+    const mapa = crearMapaCabecera(cabecera);
     const datos = tieneCabecera ? filas.slice(1) : filas;
     G.registros = datos.map((fila, indice) => registroDesdeFila(fila, mapa, indice));
   }
@@ -406,9 +365,10 @@ const FILTROS = {
   fechaCompraTupper: "fFechaCompra",
   fotoTupper: "fFoto",
   ocupado: "fOcupado",
+  enQueCasaEsta: "fCasa",
   ubicacion: "fUbicacion",
-  estado: "fEstado",
   comida: "fComida",
+  urlCookido: "fUrlCookido",
   gluten: "fGluten",
   leche: "fLeche",
   fechaPreparacion: "fFechaPreparacion"
@@ -431,25 +391,26 @@ function registroCoincide(registro, filtros) {
     && coincideFecha(registro.fechaCompraTupper, filtros.fechaCompraTupper)
     && coincideTexto(registro.fotoTupper, filtros.fotoTupper)
     && coincideSiNo(registro.ocupado, filtros.ocupado)
+    && coincideTexto(registro.enQueCasaEsta, filtros.enQueCasaEsta)
     && coincideTexto(registro.ubicacion, filtros.ubicacion)
-    && coincideTexto(registro.estado, filtros.estado)
     && coincideTexto(registro.comida, filtros.comida)
+    && coincideTexto(registro.urlCookido, filtros.urlCookido)
     && coincideSiNo(registro.gluten, filtros.gluten)
     && coincideSiNo(registro.leche, filtros.leche)
     && coincideFecha(registro.fechaPreparacion, filtros.fechaPreparacion);
 }
-function compararUbicacion(a, b) {
-  const na = norm(a.ubicacion), nb = norm(b.ubicacion);
-  const ra = ORDEN_UBICACIONES.has(na) ? ORDEN_UBICACIONES.get(na) : 100;
-  const rb = ORDEN_UBICACIONES.has(nb) ? ORDEN_UBICACIONES.get(nb) : 100;
+function compararCasaYUbicacion(a, b) {
+  const ca = norm(a.enQueCasaEsta), cb = norm(b.enQueCasaEsta);
+  const ra = ORDEN_CASAS.has(ca) ? ORDEN_CASAS.get(ca) : 100;
+  const rb = ORDEN_CASAS.has(cb) ? ORDEN_CASAS.get(cb) : 100;
   if (ra !== rb) return ra - rb;
-  const porTexto = collator.compare(a.ubicacion || "", b.ubicacion || "");
-  if (porTexto) return porTexto;
-  const ea = ORDEN_ESTADOS.has(norm(a.estado)) ? ORDEN_ESTADOS.get(norm(a.estado)) : 50;
-  const eb = ORDEN_ESTADOS.has(norm(b.estado)) ? ORDEN_ESTADOS.get(norm(b.estado)) : 50;
-  if (ea !== eb) return ea - eb;
-  const porEstado = collator.compare(a.estado || "", b.estado || "");
-  if (porEstado) return porEstado;
+  const porCasa = collator.compare(a.enQueCasaEsta || "", b.enQueCasaEsta || "");
+  if (porCasa) return porCasa;
+  const ua = ORDEN_UBICACIONES.has(norm(a.ubicacion)) ? ORDEN_UBICACIONES.get(norm(a.ubicacion)) : 50;
+  const ub = ORDEN_UBICACIONES.has(norm(b.ubicacion)) ? ORDEN_UBICACIONES.get(norm(b.ubicacion)) : 50;
+  if (ua !== ub) return ua - ub;
+  const porUbicacion = collator.compare(a.ubicacion || "", b.ubicacion || "");
+  if (porUbicacion) return porUbicacion;
   return collator.compare(a.nombreTupper || "", b.nombreTupper || "");
 }
 function limpiarFiltros() {
@@ -474,29 +435,14 @@ function tarjetaHtml(registro, indice) {
   return `
     <article class="tupper ${clase}" data-indice="${indice}">
       ${marcoFoto}
-      <div>
-        <div class="cabecera-tupper">
-          <div>
-            <h3>${escapeHtml(valorVisible(registro.nombreTupper, "Tupper sin nombre"))}</h3>
-            <p class="comida-principal ${ocupado ? "" : "vacio"}">${escapeHtml(comida)}</p>
-          </div>
-          <button class="editar" type="button" data-editar="${indice}">Editar contenido</button>
-        </div>
+      <div class="vista-previa-tupper">
+        <p class="comida-principal ${ocupado ? "" : "vacio"}">${escapeHtml(comida)}</p>
+        <h3>${escapeHtml(valorVisible(registro.nombreTupper, "Tupper sin nombre"))}</h3>
         <div class="badges">
-          <span class="badge">Ubicación: ${escapeHtml(valorVisible(registro.ubicacion))}</span>
-          <span class="badge estado">Estado: ${escapeHtml(ocupado ? valorVisible(registro.estado) : "Libre")}</span>
-          <span class="badge fecha">Preparación: ${escapeHtml(ocupado ? fechaVisible(registro.fechaPreparacion) : "—")}</span>
+          <span class="badge">En q casa está: ${escapeHtml(valorVisible(registro.enQueCasaEsta))}</span>
+          <span class="badge estado">Ubicación: ${escapeHtml(ocupado ? valorVisible(registro.ubicacion) : "Libre")}</span>
         </div>
-        <dl class="datos-tupper">
-          ${datoHtml("Comentarios tupper", registro.comentariosTupper)}
-          ${datoHtml("Material tapa", registro.materialTapa)}
-          ${datoHtml("Material tupper", registro.materialTupper)}
-          ${datoHtml("Fecha compra tupper", registro.fechaCompraTupper, true)}
-          ${datoHtml("Foto tupper", registro.fotoTupper)}
-          ${datoHtml("Ocupado", canonSiNo(registro.ocupado, false))}
-          ${datoHtml("Gluten", ocupado ? registro.gluten : "")}
-          ${datoHtml("Leche", ocupado ? registro.leche : "")}
-        </dl>
+        <button class="editar" type="button" data-editar="${indice}">Ver / editar tupper</button>
       </div>
     </article>`;
 }
@@ -512,7 +458,7 @@ function render() {
   const visibles = G.registros
     .map((registro, indice) => ({ registro, indice }))
     .filter(({ registro }) => registroCoincide(registro, filtros))
-    .sort((a, b) => compararUbicacion(a.registro, b.registro));
+    .sort((a, b) => compararCasaYUbicacion(a.registro, b.registro));
 
   actualizarResumen(visibles.length);
   const lista = $("listaTuppers");
@@ -545,55 +491,99 @@ async function cargarFotosRenderizadas(visibles) {
 }
 
 // ---------- Editor ----------
-function usoHistorialHtml(uso, posicion) {
-  const ocupado = esSi(uso.ocupado);
-  const url = urlHttpSegura(uso.urlCookido);
-  const urlHtml = url
-    ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">Abrir receta</a>`
-    : escapeHtml(valorVisible(uso.urlCookido));
-  return `<article class="uso-anterior">
-    <div class="uso-anterior-cabecera">
-      <strong>Uso anterior ${posicion}</strong>
-      <span>${escapeHtml(fechaHoraVisible(uso.guardado))}</span>
-    </div>
-    <dl class="datos-historial">
-      ${datoHtml("Ocupado", canonSiNo(uso.ocupado, false))}
-      ${datoHtml("Ubicación", uso.ubicacion)}
-      ${datoHtml("Estado", ocupado ? uso.estado : "")}
-      ${datoHtml("Comida", ocupado ? uso.comida : "")}
-      <div class="dato"><dt>Url cookido</dt><dd>${ocupado ? urlHtml : "—"}</dd></div>
-      ${datoHtml("Gluten", ocupado ? uso.gluten : "")}
-      ${datoHtml("Leche", ocupado ? uso.leche : "")}
-      ${datoHtml("Fecha preparación", ocupado ? uso.fechaPreparacion : "", true)}
-    </dl>
-  </article>`;
+function normalizarUsoHistorico(uso) {
+  const formatoNuevo = Object.prototype.hasOwnProperty.call(uso || {}, "enQueCasaEsta");
+  return {
+    guardadoEn: uso && uso.guardadoEn ? uso.guardadoEn : "",
+    ocupado: uso && uso.ocupado ? uso.ocupado : "No",
+    enQueCasaEsta: formatoNuevo ? (uso.enQueCasaEsta || "") : ((uso && uso.ubicacion) || ""),
+    ubicacion: formatoNuevo ? (uso.ubicacion || "") : ((uso && uso.estado) || ""),
+    comida: (uso && uso.comida) || "",
+    urlCookido: (uso && uso.urlCookido) || "",
+    gluten: (uso && uso.gluten) || "",
+    leche: (uso && uso.leche) || "",
+    fechaPreparacion: (uso && uso.fechaPreparacion) || ""
+  };
 }
-function renderHistorial(registro) {
-  const historial = normalizarHistorial(registro._historial).slice(0, 3);
-  $("historialUsos").innerHTML = historial.length
-    ? historial.map((uso, indice) => usoHistorialHtml(uso, indice + 1)).join("")
-    : `<p class="historial-vacio">Todavía no hay usos anteriores guardados.</p>`;
+function fechaHoraVisible(valor) {
+  if (!valor) return "Fecha no registrada";
+  const fecha = new Date(valor);
+  if (Number.isNaN(fecha.getTime())) return valorVisible(valor);
+  return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(fecha);
+}
+function enlaceHistorial(url) {
+  const texto = String(url || "").trim();
+  if (!texto) return "—";
+  if (!/^https?:\/\//i.test(texto)) return escapeHtml(texto);
+  return `<a href="${escapeHtml(texto)}" target="_blank" rel="noopener">Abrir enlace</a>`;
+}
+function historialHtml(registro) {
+  const historial = parsearHistorial(registro.historial).map(normalizarUsoHistorico);
+  if (!historial.length) return `<p class="historial-vacio">Todavía no hay usos anteriores guardados.</p>`;
+  return historial.map((uso, indice) => `
+    <article class="uso-anterior">
+      <div class="uso-anterior-cabecera">
+        <strong>Uso anterior ${indice + 1}</strong>
+        <span>${escapeHtml(fechaHoraVisible(uso.guardadoEn))}</span>
+      </div>
+      <dl class="datos-historial">
+        ${datoHtml("Ocupado", canonSiNo(uso.ocupado, false))}
+        ${datoHtml("En q casa está", uso.enQueCasaEsta)}
+        ${datoHtml("Ubicación", uso.ubicacion)}
+        ${datoHtml("Comida", uso.comida)}
+        <div class="dato"><dt>Url cookido</dt><dd>${enlaceHistorial(uso.urlCookido)}</dd></div>
+        ${datoHtml("Gluten", uso.gluten)}
+        ${datoHtml("Leche", uso.leche)}
+        ${datoHtml("Fecha preparación", uso.fechaPreparacion, true)}
+      </dl>
+    </article>`).join("");
+}
+function prepararHistorial(registro) {
+  $("historialUsos").innerHTML = historialHtml(registro);
+  $("panelHistorial").hidden = true;
+  $("btnHistorial").setAttribute("aria-expanded", "false");
+  $("btnHistorial").textContent = "Mostrar los 3 usos anteriores";
+}
+function alternarHistorial() {
+  const panel = $("panelHistorial");
+  const mostrar = panel.hidden;
+  panel.hidden = !mostrar;
+  $("btnHistorial").setAttribute("aria-expanded", mostrar ? "true" : "false");
+  $("btnHistorial").textContent = mostrar ? "Ocultar usos anteriores" : "Mostrar los 3 usos anteriores";
+}
+function crearInstantanea(registro) {
+  return {
+    guardadoEn: new Date().toISOString(),
+    ocupado: registro.ocupado || "No",
+    enQueCasaEsta: registro.enQueCasaEsta || "",
+    ubicacion: registro.ubicacion || "",
+    comida: registro.comida || "",
+    urlCookido: registro.urlCookido || "",
+    gluten: registro.gluten || "",
+    leche: registro.leche || "",
+    fechaPreparacion: registro.fechaPreparacion || ""
+  };
 }
 function abrirEditor(indice) {
   const registro = G.registros[indice];
   if (!registro) return;
   $("editorIndice").value = String(indice);
-  $("tituloEditor").textContent = `Editar contenido · ${valorVisible(registro.nombreTupper, "Tupper")}`;
+  $("tituloEditor").textContent = valorVisible(registro.nombreTupper, "Tupper");
   $("datosFijos").innerHTML = CAMPOS_FIJOS.map(col => datoHtml(col.label, registro[col.key], col.key === "fechaCompraTupper")).join("");
 
   $("eOcupado").value = esSi(registro.ocupado) ? "si" : "no";
-  const ubicacion = String(registro.ubicacion || "").trim();
+  const casa = String(registro.enQueCasaEsta || "").trim();
   const predefinidas = ["CM", "CS", "3", "4"];
-  const predefinida = predefinidas.find(v => norm(v) === norm(ubicacion));
-  $("eUbicacionTipo").value = predefinida || "otra";
-  $("eUbicacionLibre").value = predefinida ? "" : ubicacion;
-  $("eEstado").value = ["Congelador", "Frigo", "Fuera"].find(v => norm(v) === norm(registro.estado)) || "";
+  const predefinida = predefinidas.find(v => norm(v) === norm(casa));
+  $("eCasaTipo").value = predefinida || "otra";
+  $("eCasaLibre").value = predefinida ? "" : casa;
+  $("eUbicacion").value = ["Congelador", "Frigo", "Fuera"].find(v => norm(v) === norm(registro.ubicacion)) || "";
   $("eComida").value = registro.comida || "";
   $("eUrlCookido").value = registro.urlCookido || "";
   $("eGluten").value = esSi(registro.gluten) ? "Sí" : (norm(registro.gluten) === "no" ? "No" : "");
   $("eLeche").value = esSi(registro.leche) ? "Sí" : (norm(registro.leche) === "no" ? "No" : "");
   $("eFechaPreparacion").value = fechaParaInput(registro.fechaPreparacion);
-  renderHistorial(registro);
+  prepararHistorial(registro);
   actualizarEditor();
 
   const dialogo = $("editor");
@@ -607,16 +597,17 @@ function cerrarEditor() {
 }
 function actualizarEditor() {
   const ocupado = $("eOcupado").value === "si";
-  const otraUbicacion = $("eUbicacionTipo").value === "otra";
-  $("campoUbicacionLibre").hidden = !otraUbicacion;
-  $("eUbicacionLibre").required = otraUbicacion;
+  const otraCasa = $("eCasaTipo").value === "otra";
+  $("campoCasaLibre").hidden = !otraCasa;
+  $("eCasaLibre").required = otraCasa;
   $("contenidoEditor").disabled = !ocupado;
-  $("eEstado").required = ocupado;
+  $("eUbicacion").required = ocupado;
   $("eComida").required = ocupado;
-  $("eUrlCookido").required = ocupado;
   $("eGluten").required = ocupado;
   $("eLeche").required = ocupado;
   $("eFechaPreparacion").required = ocupado;
+  // Url cookido es siempre opcional.
+  $("eUrlCookido").required = false;
   if (ocupado && !$("eFechaPreparacion").value) $("eFechaPreparacion").value = hoyIso();
 }
 async function guardarEditor(evento) {
@@ -629,35 +620,34 @@ async function guardarEditor(evento) {
 
   const copiaAnterior = Object.assign({}, registro);
   const ocupado = $("eOcupado").value === "si";
-  const ubicacion = $("eUbicacionTipo").value === "otra"
-    ? $("eUbicacionLibre").value.trim()
-    : $("eUbicacionTipo").value;
+  const casa = $("eCasaTipo").value === "otra"
+    ? $("eCasaLibre").value.trim()
+    : $("eCasaTipo").value;
+  const nuevo = {
+    ocupado: ocupado ? "Sí" : "No",
+    enQueCasaEsta: casa,
+    ubicacion: ocupado ? $("eUbicacion").value : "",
+    comida: ocupado ? $("eComida").value.trim() : "",
+    urlCookido: ocupado ? $("eUrlCookido").value.trim() : "",
+    gluten: ocupado ? $("eGluten").value : "",
+    leche: ocupado ? $("eLeche").value : "",
+    fechaPreparacion: ocupado ? $("eFechaPreparacion").value : ""
+  };
 
-  registro.ocupado = ocupado ? "Sí" : "No";
-  registro.ubicacion = ubicacion;
-  if (ocupado) {
-    registro.estado = $("eEstado").value;
-    registro.comida = $("eComida").value.trim();
-    registro.urlCookido = $("eUrlCookido").value.trim();
-    registro.gluten = $("eGluten").value;
-    registro.leche = $("eLeche").value;
-    registro.fechaPreparacion = $("eFechaPreparacion").value;
-  } else {
-    registro.estado = "";
-    registro.comida = "";
-    registro.urlCookido = "";
-    registro.gluten = "";
-    registro.leche = "";
-    registro.fechaPreparacion = "";
+  const hayCambios = CAMPOS_HISTORIAL.some(key => String(registro[key] || "").trim() !== String(nuevo[key] || "").trim());
+  if (!hayCambios) {
+    setEstado("No había cambios que guardar.");
+    cerrarEditor();
+    return;
   }
 
-  const haCambiado = CLAVES_USO.some(key => String(copiaAnterior[key] ?? "").trim() !== String(registro[key] ?? "").trim());
-  if (haCambiado) anadirAlHistorial(registro, copiaAnterior);
+  const historial = parsearHistorial(registro.historial);
+  registro.historial = serializarHistorial([crearInstantanea(registro), ...historial].slice(0, 3));
+  Object.assign(registro, nuevo);
 
   render();
   try {
-    if (haCambiado) await guardarDatos();
-    else setEstado("No había cambios que guardar.");
+    await guardarDatos();
     cerrarEditor();
   } catch (error) {
     Object.assign(registro, copiaAnterior);
@@ -749,7 +739,8 @@ $("listaTuppers").addEventListener("click", event => {
   }
 });
 $("eOcupado").addEventListener("change", actualizarEditor);
-$("eUbicacionTipo").addEventListener("change", actualizarEditor);
+$("eCasaTipo").addEventListener("change", actualizarEditor);
+$("btnHistorial").addEventListener("click", alternarHistorial);
 $("btnCerrarEditor").addEventListener("click", cerrarEditor);
 $("btnCancelarEditor").addEventListener("click", cerrarEditor);
 $("formEditor").addEventListener("submit", guardarEditor);
