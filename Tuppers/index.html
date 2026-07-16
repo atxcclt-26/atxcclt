@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Gestión de tuppers</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#256d4a" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Tuppers" />
+
+  <style>
+    :root {
+      color-scheme: light;
+      --fondo: #f4f7f5;
+      --panel: #ffffff;
+      --texto: #17201b;
+      --suave: #647069;
+      --borde: #d9e1dc;
+      --primario: #256d4a;
+      --primario-oscuro: #185137;
+      --secundario: #315f86;
+      --aviso: #a25900;
+      --error: #b42318;
+      --libre: #eef7f1;
+      --ocupado: #fff7e8;
+      --sombra: 0 8px 24px rgba(23, 32, 27, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .55; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px max(16px, env(safe-area-inset-left)) 14px max(16px, env(safe-area-inset-right));
+      background: rgba(255,255,255,.96);
+      border-bottom: 1px solid var(--borde);
+      backdrop-filter: blur(10px);
+    }
+    header h1 { margin: 0; font-size: 1.35rem; }
+    header .subtitulo { margin: 3px 0 0; color: var(--suave); font-size: .78rem; }
+    #loginBtn {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+
+    main {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 16px max(14px, env(safe-area-inset-left)) 40px max(14px, env(safe-area-inset-right));
+    }
+    #estado-carga { min-height: 1.35rem; margin: 4px 0 14px; color: var(--suave); }
+    #estado-carga.error { color: var(--error); font-weight: 700; }
+    .vista { display: none; }
+    body.logged-in .vista.activa { display: block; }
+
+    .barra-principal {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .barra-principal h2 { margin: 0; font-size: 1.15rem; }
+    .acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+    .boton {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+    .boton.primario { border-color: var(--primario); background: var(--primario); color: #fff; }
+    .boton.primario:hover { background: var(--primario-oscuro); }
+
+    .resumen {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(110px, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+    .resumen article {
+      background: var(--panel);
+      border: 1px solid var(--borde);
+      border-radius: 11px;
+      padding: 12px;
+      box-shadow: var(--sombra);
+    }
+    .resumen strong { display: block; font-size: 1.45rem; }
+    .resumen span { color: var(--suave); font-size: .8rem; }
+
+    details.filtros {
+      margin: 12px 0 16px;
+      border: 1px solid var(--borde);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--sombra);
+    }
+    details.filtros > summary {
+      list-style: none;
+      padding: 13px 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    details.filtros > summary::-webkit-details-marker { display: none; }
+    .filtros-contenido { padding: 0 15px 15px; }
+    .rejilla-filtros {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    label.campo { display: flex; flex-direction: column; gap: 5px; font-size: .8rem; font-weight: 700; }
+    label.campo input, label.campo select, label.campo textarea {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 8px 10px;
+      font-weight: 400;
+    }
+    label.campo textarea { resize: vertical; min-height: 76px; }
+    .filtros-acciones { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    #listaTuppers { display: flex; flex-direction: column; gap: 12px; }
+    .tupper {
+      display: grid;
+      grid-template-columns: 132px minmax(0, 1fr);
+      gap: 14px;
+      border: 1px solid var(--borde);
+      border-radius: 14px;
+      background: var(--panel);
+      padding: 12px;
+      box-shadow: var(--sombra);
+    }
+    .tupper.ocupado { border-left: 6px solid #d88922; background: linear-gradient(90deg, var(--ocupado), #fff 18%); }
+    .tupper.libre { border-left: 6px solid #4b9b69; background: linear-gradient(90deg, var(--libre), #fff 18%); }
+    .foto-marco {
+      position: relative;
+      width: 132px;
+      height: 132px;
+      border-radius: 11px;
+      overflow: hidden;
+      border: 1px solid var(--borde);
+      background: #edf1ee;
+    }
+    .foto-marco img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .foto-marco .sin-foto, .foto-marco .cargando-foto {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      color: var(--suave);
+      text-align: center;
+      font-size: .8rem;
+    }
+    .foto-marco button {
+      position: absolute;
+      inset: 0;
+      border: 0;
+      background: transparent;
+      padding: 0;
+    }
+    .cabecera-tupper { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .cabecera-tupper h3 { margin: 0; font-size: 1.15rem; }
+    .comida-principal { margin: 5px 0 0; font-weight: 700; font-size: 1rem; }
+    .comida-principal.vacio { color: var(--suave); font-weight: 400; }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 9px 0 10px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: #edf2ef;
+      color: #33423a;
+      font-size: .78rem;
+      font-weight: 700;
+    }
+    .badge.estado { background: #eaf2f9; color: #264f70; }
+    .badge.fecha { background: #f4edf9; color: #65427d; }
+    .datos-tupper {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px 14px;
+      margin: 0;
+    }
+    .dato { min-width: 0; }
+    .dato dt { color: var(--suave); font-size: .7rem; font-weight: 700; margin-bottom: 2px; }
+    .dato dd { margin: 0; overflow-wrap: anywhere; }
+    .editar {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 9px;
+      background: var(--secundario);
+      color: #fff;
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+    .vacio-lista {
+      border: 1px dashed var(--borde);
+      border-radius: 12px;
+      padding: 28px;
+      color: var(--suave);
+      background: #fff;
+      text-align: center;
+    }
+
+    dialog {
+      width: min(720px, calc(100% - 24px));
+      max-height: calc(100vh - 32px);
+      border: 0;
+      border-radius: 14px;
+      padding: 0;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+    dialog::backdrop { background: rgba(20, 30, 24, .58); }
+    .dialogo-cabecera {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--borde);
+      background: #fff;
+    }
+    .dialogo-cabecera h2 { margin: 0; font-size: 1.1rem; }
+    .cerrar-dialogo { border: 0; background: transparent; font-size: 1.45rem; line-height: 1; }
+    #formEditor { padding: 14px 16px 18px; overflow: auto; }
+    .solo-lectura {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px 12px;
+      padding: 12px;
+      border-radius: 10px;
+      background: #f5f7f6;
+      margin-bottom: 14px;
+    }
+    .solo-lectura .dato dd { font-size: .9rem; }
+    fieldset { border: 0; margin: 0; padding: 0; }
+    fieldset:disabled { opacity: .52; }
+    .rejilla-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .ancho-completo { grid-column: 1 / -1; }
+    .nota-editor { margin: 8px 0 14px; color: var(--suave); font-size: .82rem; }
+    .historial-usos {
+      margin: 0 0 16px;
+      padding: 12px;
+      border: 1px solid var(--borde);
+      border-radius: 11px;
+      background: #fbfcfb;
+    }
+    .historial-usos h3 { margin: 0 0 10px; font-size: 1rem; }
+    #historialUsos { display: flex; flex-direction: column; gap: 9px; }
+    .uso-anterior {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      padding: 10px;
+      background: #fff;
+    }
+    .uso-anterior-cabecera {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: .82rem;
+    }
+    .uso-anterior-cabecera span { color: var(--suave); }
+    .datos-historial {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      gap: 7px 12px;
+      margin: 0;
+    }
+    .datos-historial a { overflow-wrap: anywhere; }
+    .historial-vacio { margin: 0; color: var(--suave); font-size: .86rem; }
+    .dialogo-acciones {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 720px) {
+      .resumen { grid-template-columns: repeat(2, 1fr); }
+      .tupper { grid-template-columns: 92px minmax(0, 1fr); gap: 10px; padding: 10px; }
+      .foto-marco { width: 92px; height: 92px; }
+      .cabecera-tupper { flex-direction: column; }
+      .editar { width: 100%; }
+      .datos-tupper { grid-column: 1 / -1; }
+      .rejilla-editor { grid-template-columns: 1fr; }
+      .ancho-completo { grid-column: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Gestión de tuppers</h1>
+      <p class="subtitulo">Inventario, contenido y ubicación</p>
+    </div>
+    <button id="loginBtn" type="button">Iniciar sesión</button>
+  </header>
+
+  <main>
+    <p id="estado-carga">Inicia sesión para empezar.</p>
+
+    <section id="inventario" class="vista">
+      <div class="barra-principal">
+        <h2>Inventario de tuppers</h2>
+        <div class="acciones">
+          <button id="btnRecargar" class="boton" type="button">↻ Recargar</button>
+          <button id="btnLimpiar" class="boton" type="button">Limpiar filtros</button>
+        </div>
+      </div>
+
+      <section class="resumen" aria-label="Resumen del inventario">
+        <article><strong id="totalTuppers">0</strong><span>Total</span></article>
+        <article><strong id="totalOcupados">0</strong><span>Ocupados</span></article>
+        <article><strong id="totalLibres">0</strong><span>Libres</span></article>
+        <article><strong id="totalVisibles">0</strong><span>Visibles</span></article>
+      </section>
+
+      <details class="filtros" open>
+        <summary>Filtros del listado</summary>
+        <div class="filtros-contenido">
+          <div class="rejilla-filtros">
+            <label class="campo">Nombre tupper<input id="fNombre" type="search" autocomplete="off" /></label>
+            <label class="campo">Comentarios tupper<input id="fComentarios" type="search" autocomplete="off" /></label>
+            <label class="campo">Material tapa<input id="fMaterialTapa" type="search" autocomplete="off" /></label>
+            <label class="campo">Material tupper<input id="fMaterialTupper" type="search" autocomplete="off" /></label>
+            <label class="campo">Fecha compra tupper<input id="fFechaCompra" type="date" /></label>
+            <label class="campo">Foto tupper<input id="fFoto" type="search" autocomplete="off" placeholder="Nombre o ruta" /></label>
+            <label class="campo">Ocupado
+              <select id="fOcupado"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
+            </label>
+            <label class="campo">Ubicación<input id="fUbicacion" type="search" autocomplete="off" placeholder="CM, CS, 3, 4…" /></label>
+            <label class="campo">Estado
+              <select id="fEstado"><option value="">Todos</option><option value="congelador">Congelador</option><option value="frigo">Frigo</option><option value="fuera">Fuera</option></select>
+            </label>
+            <label class="campo">Comida<input id="fComida" type="search" autocomplete="off" /></label>
+            <label class="campo">Gluten
+              <select id="fGluten"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
+            </label>
+            <label class="campo">Leche
+              <select id="fLeche"><option value="">Todos</option><option value="si">Sí</option><option value="no">No</option></select>
+            </label>
+            <label class="campo">Fecha preparación<input id="fFechaPreparacion" type="date" /></label>
+          </div>
+        </div>
+      </details>
+
+      <div id="listaTuppers" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="editor">
+    <div class="dialogo-cabecera">
+      <h2 id="tituloEditor">Editar contenido</h2>
+      <button id="btnCerrarEditor" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <form id="formEditor" method="dialog">
+      <input id="editorIndice" type="hidden" />
+      <div id="datosFijos" class="solo-lectura"></div>
+      <p class="nota-editor">Los datos que definen el tupper son de solo lectura. Para cambiarlos, edita el fichero de OneDrive.</p>
+
+      <section class="historial-usos" aria-labelledby="tituloHistorial">
+        <h3 id="tituloHistorial">Tres usos anteriores</h3>
+        <div id="historialUsos"></div>
+      </section>
+
+      <div class="rejilla-editor">
+        <label class="campo">Ocupado
+          <select id="eOcupado" required><option value="no">No</option><option value="si">Sí</option></select>
+        </label>
+        <label class="campo">Ubicación
+          <select id="eUbicacionTipo" required>
+            <option value="CM">CM</option><option value="CS">CS</option><option value="3">3</option><option value="4">4</option><option value="otra">Otra ubicación</option>
+          </select>
+        </label>
+        <label id="campoUbicacionLibre" class="campo ancho-completo" hidden>Ubicación libre
+          <input id="eUbicacionLibre" type="text" maxlength="120" />
+        </label>
+      </div>
+
+      <fieldset id="contenidoEditor">
+        <div class="rejilla-editor" style="margin-top:12px">
+          <label class="campo">Estado
+            <select id="eEstado"><option value="">Selecciona</option><option value="Congelador">Congelador</option><option value="Frigo">Frigo</option><option value="Fuera">Fuera</option></select>
+          </label>
+          <label class="campo">Fecha preparación<input id="eFechaPreparacion" type="date" /></label>
+          <label class="campo ancho-completo">Comida<textarea id="eComida" maxlength="500"></textarea></label>
+          <label class="campo ancho-completo">Url cookido
+            <input id="eUrlCookido" type="url" maxlength="1000" placeholder="https://…" inputmode="url" />
+          </label>
+          <label class="campo">Gluten
+            <select id="eGluten"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
+          </label>
+          <label class="campo">Leche
+            <select id="eLeche"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option></select>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="dialogo-acciones">
+        <button id="btnCancelarEditor" class="boton" type="button">Cancelar</button>
+        <button id="btnGuardarEditor" class="boton primario" type="submit">Guardar cambios</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
+  <script src="app.js?v=2026071602"></script>
+</body>
+</html>
