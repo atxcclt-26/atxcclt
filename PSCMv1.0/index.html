@@ -52,12 +52,12 @@
     .tarea .hora { color: #777; font-size: .72rem; margin-left: 8px; white-space: nowrap; }
     .tarea button { padding: 8px 14px; border: 0; border-radius: 8px; color: #fff; font-weight: 600; font-size: .9rem; cursor: pointer; white-space: nowrap; }
     .tarea button.check { background: #1a7f37; }
+    .tarea button.pendiente { background: #fdeaea; color: #b00020; border: 1px solid #f2c0c0; }
     .tarea button.foto  { background: #2b6cb0; }
-    .tarea.hecha button.check { background: #6b7280; }
     .tarea button:disabled { opacity: .4; cursor: default; }
     .tarea a.ver { font-size: .8rem; margin-left: 6px; white-space: nowrap; }
     .tarea .botones { display: flex; gap: 6px; align-items: center; }
-    .tarea button.edit   { background: #6b7280; }
+    .tarea button.edit   { background: #1a7f37; }
     .tarea button.cancel { background: #9ca3af; padding: 8px 10px; }
     .tarea button.deshacer { background: #b45309; }
 
@@ -81,7 +81,7 @@
     <h1>PSCM</h1>
     <button id="loginBtn" type="button">Iniciar sesión</button>
   </header>
-  <p class="build">Generado el 15/07/2026</p>
+  <p class="build">Generado el 20/07/2026</p>
 
   <p id="estado-carga">Inicia sesión para empezar.</p>
 
@@ -121,6 +121,6 @@
   <input type="file" id="fotoInput" accept="image/*" capture="environment" style="display:none" />
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607151200"></script>
+  <script src="app.js?v=202607201100"></script>
 </body>
 </html>

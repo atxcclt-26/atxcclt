@@ -4,7 +4,7 @@
 //   ZZZ_SG_pscm/                      ← carpeta en la raíz (sin distinguir mayúsculas)
 //     pscm.csv                        ← plantilla: PISO;ZONA;ACCION  (headerless, ";")
 //     2607151032/                     ← una subcarpeta por ejecución (YYMMDDHHMM)
-//       2607151032.csv                ← estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA
+//       2607151032.csv                ← estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA;USUARIO;MARCA
 //       003_Foto_armario_izquierda.jpg  ← fotos de esa ejecución
 //
 // Si la ACCION empieza por "foto" → se valida haciendo una foto; si no → check.
@@ -44,6 +44,9 @@ const UI = {
 let inicializado = false;
 let guardando = false, guardarDeNuevo = false;
 let fotoPendiente = null;  // idx de la fila cuya foto se está pidiendo
+let syncTimer = null;      // polling de sincronización multi-dispositivo
+let minTimer = null;       // refresco del "hace x min" en tareas hechas
+const SYNC_MS = 20000;     // intervalo del polling (ms)
 
 // ---------- UI helpers ----------
 function setEstado(msg, err = false) {
@@ -81,6 +84,33 @@ function haceDias(n) { // días naturales transcurridos desde la ejecución
   const f = new Date(2000 + Number(n.slice(0, 2)), Number(n.slice(2, 4)) - 1, Number(n.slice(4, 6)));
   const dias = Math.round((hoy - f) / 86400000);
   return dias <= 0 ? "hoy" : dias === 1 ? "ayer" : `hace ${dias} días`;
+}
+// Primera palabra del nombre de la cuenta activa (fallback: parte local del email)
+function nombreUsuario() {
+  const a = msalInstance.getActiveAccount();
+  const n = (a && (a.name || a.username)) || "";
+  return n.split(/[\s@]+/)[0] || "";
+}
+// Marca temporal completa "YYYY-MM-DD HH:MM:SS" (hora local)
+function ahoraTS() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+// Minutos transcurridos desde la validación de una fila (usa MARCA; si falta, fecha de la lista + HORA)
+function haceTexto(row, nombreLista) {
+  let d = null;
+  const m = (row[7] || "").match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (m) d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  else if (row[5]) { // filas antiguas sin MARCA: fecha de la lista + HORA
+    const h = row[5].split(":");
+    d = new Date(2000 + +nombreLista.slice(0, 2), +nombreLista.slice(2, 4) - 1, +nombreLista.slice(4, 6), +h[0] || 0, +h[1] || 0, +h[2] || 0);
+  }
+  if (!d || isNaN(d)) return "";
+  const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (mins < 1) return "ahora mismo";
+  if (mins < 60) return `hace ${mins} min`;
+  if (mins < 1440) return `hace ${Math.floor(mins / 60)} h ${mins % 60} min`;
+  return `hace ${Math.floor(mins / 1440)} día(s)`;
 }
 
 // ---------- CSV (";" — mismo parser que la app hermana) ----------
@@ -210,10 +240,72 @@ async function listarFotos(nombre) {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ---------- Sincronización multi-dispositivo ----------
+// Cada dispositivo mantiene sus filas en memoria; sin fusión, el autosave de uno
+// machacaría lo validado en el otro (last-write-wins sobre el CSV completo).
+// Estrategia: e.dirty = Set de índices modificados localmente y aún no subidos.
+// Al fusionar con el CSV remoto, lo local "sucio" gana; el resto adopta lo remoto.
+
+async function descargarEstadoRemoto() {
+  const e = G.ejecucion;
+  const text = await descargarTexto(`${e.nombre}/${e.stateName}`);
+  return parseCSV(text).map(r => {
+    while (r.length < 8) r.push("");
+    return r.slice(0, 8).map(f => (f || "").trim());
+  });
+}
+
+// Copia ESTADO/FOTO/HORA/USUARIO/MARCA remotos en las filas no modificadas localmente. Devuelve nº de cambios.
+function fusionar(remoto) {
+  const e = G.ejecucion;
+  let cambios = 0;
+  const n = Math.min(e.rows.length, remoto.length);
+  for (let i = 0; i < n; i++) {
+    if (e.dirty.has(i)) continue;                 // lo modificado aquí tiene prioridad
+    const l = e.rows[i], r = remoto[i];
+    let dif = false;
+    for (let c = 3; c < 8; c++) if (l[c] !== r[c]) { dif = true; break; }
+    if (dif) { for (let c = 3; c < 8; c++) l[c] = r[c]; cambios++; }
+  }
+  return cambios;
+}
+
+// Polling / resync manual: baja el CSV remoto y refleja cambios del otro dispositivo.
+async function sincronizar() {
+  const e = G.ejecucion;
+  if (!e || guardando || document.hidden) return;
+  try {
+    const remoto = await descargarEstadoRemoto();
+    if (fusionar(remoto)) {
+      renderArbol();
+      setEstado("Lista actualizada con cambios de otro dispositivo.");
+    }
+  } catch (err) { console.warn("Sync:", err.message); }
+}
+function iniciarSync() {
+  detenerSync();
+  syncTimer = setInterval(sincronizar, SYNC_MS);
+  // refresco periódico del "hace x min" de las tareas hechas
+  minTimer = setInterval(() => { if (G.ejecucion && !document.hidden) renderArbol(); }, 60000);
+}
+function detenerSync() {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  if (minTimer) { clearInterval(minTimer); minTimer = null; }
+}
+
 // ---------- Guardado del estado de la ejecución (autosave con reintento en cola) ----------
 async function guardarEstado() {
   const e = G.ejecucion;
+  const modAlEmpezar = e.mod;
+  // Fusiona lo remoto antes de subir para no pisar validaciones de otro dispositivo.
+  try {
+    const remoto = await descargarEstadoRemoto();
+    if (fusionar(remoto)) renderArbol();
+  } catch (err) { /* p. ej. 404 en el primer guardado de una lista recién creada */ }
   await subirContenido(`${e.nombre}/${e.stateName}`, serializeCSV(e.rows), "text/csv");
+  // Solo limpiamos "dirty" si no hubo modificaciones durante la subida (si las hubo,
+  // hay otro guardado en cola que las volverá a fusionar y subir).
+  if (e.mod === modAlEmpezar) e.dirty.clear();
 }
 function programarGuardado() {
   if (guardando) { guardarDeNuevo = true; return; }
@@ -248,7 +340,7 @@ async function actualizarMenu() {
   btn.disabled = false;
 }
 function volverAlMenu() {
-  G.ejecucion = null; cerrarCarrete();
+  G.ejecucion = null; cerrarCarrete(); detenerSync();
   mostrarVista("menu");
   setEstado("Elige una opción.");
   actualizarMenu();
@@ -272,15 +364,16 @@ async function nuevaEjecucion() {
     await cargarPlantilla();                       // siempre la plantilla actual
     const nombre = nombreEjecucion();
     const sub = await crearSubcarpeta(nombre);
-    // Estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA — congela la estructura con la que se ejecuta
-    const rows = G.plantilla.map(t => [t[0], t[1], t[2], "", "", ""]);
-    G.ejecucion = { nombre, subfolderId: sub.id, stateName: `${nombre}.csv`, rows };
+    // Estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA;USUARIO;MARCA — congela la estructura con la que se ejecuta
+    const rows = G.plantilla.map(t => [t[0], t[1], t[2], "", "", "", "", ""]);
+    G.ejecucion = { nombre, subfolderId: sub.id, stateName: `${nombre}.csv`, rows, dirty: new Set(), mod: 0 };
     G.listaHoy = nombre;
     await guardarEstado();
     setEstado(`Lista ${nombreLegible(nombre)} creada.`);
     resetUiArbol();
     renderArbol();
     mostrarVista("arbol");
+    iniciarSync();
   } catch (e) { setEstado("Error: " + e.message, true); }
 }
 
@@ -311,14 +404,15 @@ async function abrirEjecucion(nombre) {
     setEstado(`Abriendo ${nombreLegible(nombre)}…`);
     const text = await descargarTexto(`${nombre}/${nombre}.csv`);
     const rows = parseCSV(text).map(r => {
-      while (r.length < 6) r.push("");
-      return r.slice(0, 6).map(f => (f || "").trim());
+      while (r.length < 8) r.push("");
+      return r.slice(0, 8).map(f => (f || "").trim());
     });
-    G.ejecucion = { nombre, subfolderId: null, stateName: `${nombre}.csv`, rows };
+    G.ejecucion = { nombre, subfolderId: null, stateName: `${nombre}.csv`, rows, dirty: new Set(), mod: 0 };
     setEstado(`Lista ${nombreLegible(nombre)} cargada (${rows.length} tareas).`);
     resetUiArbol();
     renderArbol();
     mostrarVista("arbol");
+    iniciarSync();
   } catch (e) { setEstado("Error abriendo la lista: " + e.message, true); }
 }
 
@@ -354,7 +448,7 @@ function renderArbol() {
       // Pendiente: acción directa
       botones = conFoto
         ? `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 Foto</button>`
-        : `<button type="button" class="check" data-idx="${idx}" data-act="check">✓ Hecho</button>`;
+        : `<button type="button" class="check pendiente" data-idx="${idx}" data-act="check">Pendiente</button>`;
     } else if (!editable) {
       // Hecha y bloqueada: solo "Editar"
       botones = `<button type="button" class="edit" data-idx="${idx}" data-act="editar">✎ Editar</button>`;
@@ -366,8 +460,16 @@ function renderArbol() {
         + `<button type="button" class="cancel" data-idx="${idx}" data-act="cancelar">✕</button>`;
     }
     const ver = hecha && foto ? ` <a class="ver" href="#" data-idx="${idx}" data-act="ver">ver foto</a>` : "";
-    const hora = row[5] ? `<span class="hora">${escapeHtml(row[5])}</span>` : "";
-    d.innerHTML = `<span class="texto">${escapeHtml(accion)}${ver}${hora}</span><span class="botones">${botones}</span>`;
+    let meta = "";
+    if (hecha) {
+      const partes = [];
+      if (row[6]) partes.push(escapeHtml(row[6]));
+      const t = haceTexto(row, e.nombre);
+      if (t) partes.push(t);
+      if (row[5]) partes.push(escapeHtml(row[5]));
+      if (partes.length) meta = `<span class="hora">${partes.join(" · ")}</span>`;
+    }
+    d.innerHTML = `<span class="texto">${escapeHtml(accion)}${ver}${meta}</span><span class="botones">${botones}</span>`;
     cont.appendChild(d);
   });
   actualizarProgreso();
@@ -382,17 +484,25 @@ function actualizarProgreso() {
 
 // ---------- Acciones sobre tareas ----------
 function marcar(idx, estado, foto) {
-  const row = G.ejecucion.rows[idx];
+  const e = G.ejecucion;
+  const row = e.rows[idx];
+  const ok = estado === "OK";
   row[3] = estado;
   if (foto !== undefined) row[4] = foto;
-  row[5] = estado === "OK" ? new Date().toTimeString().slice(0, 8) : "";
+  row[5] = ok ? new Date().toTimeString().slice(0, 8) : "";
+  row[6] = ok ? nombreUsuario() : "";   // quién lo ha hecho (primera palabra del nombre)
+  row[7] = ok ? ahoraTS() : "";         // marca completa para calcular "hace x min"
+  e.dirty.add(idx);           // modificado localmente: gana en la fusión hasta subirse
+  e.mod++;
   UI.editables.delete(idx);   // tras editar, la tarea vuelve a quedar bloqueada
   renderArbol();
   programarGuardado();
 }
 function onCheck(idx) {
-  const hecha = norm(G.ejecucion.rows[idx][3]) === "ok";
+  const row = G.ejecucion.rows[idx];
+  const hecha = norm(row[3]) === "ok";
   if (hecha && !UI.editables.has(idx)) return;   // hecha y bloqueada: no editable
+  if (!hecha && !confirm(`¿Confirmas que esta tarea está hecha?\n\n${row[2]}`)) return;
   marcar(idx, hecha ? "" : "OK");                // toggle solo en modo edición
 }
 function pedirFoto(idx) {
@@ -506,6 +616,7 @@ function updateAuthUI() {
       catch (err) { console.error(err); }
       finally {
         loginBtn.disabled = false; inicializado = false; G.ejecucion = null;
+        detenerSync();
         document.getElementById("tareas").innerHTML = "";
         document.getElementById("listaEjecuciones").innerHTML = "";
         cerrarCarrete();
@@ -558,6 +669,8 @@ document.getElementById("tareas").addEventListener("click", (e) => {
   else if (el.dataset.act === "cancelar") { UI.editables.delete(idx); renderArbol(); }
 });
 document.getElementById("fotoInput").addEventListener("change", (e) => onFotoElegida(e.target.files[0]));
+// Al volver la app/pestaña a primer plano, resincronizar de inmediato (multi-dispositivo)
+document.addEventListener("visibilitychange", () => { if (!document.hidden) sincronizar(); });
 
 (async () => {
   try {
