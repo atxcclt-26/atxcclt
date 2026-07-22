@@ -3,124 +3,527 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>PSCM · Listas de tareas</title>
+  <title>Gestión de tuppers</title>
 
-  <!-- PWA / icono en pantalla de inicio (iPhone) -->
   <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#1a7f37" />
+  <meta name="theme-color" content="#256d4a" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
   <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-  <meta name="apple-mobile-web-app-title" content="PSCM" />
-  <style>
-    body { font-family: Arial, sans-serif; margin: 18px; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    h1 { font-size: 1.35rem; margin: 0; }
-    .build { color: #999; font-size: .72rem; margin: 4px 0 0; }
-    #estado-carga { margin: 14px 0; color: #444; }
-    #estado-carga.error { color: #b00020; }
+  <meta name="apple-mobile-web-app-title" content="Tuppers" />
 
-    /* Vistas: solo una visible */
+  <style>
+    :root {
+      color-scheme: light;
+      --fondo: #f4f7f5;
+      --panel: #ffffff;
+      --texto: #17201b;
+      --suave: #647069;
+      --borde: #d9e1dc;
+      --primario: #256d4a;
+      --primario-oscuro: #185137;
+      --secundario: #315f86;
+      --aviso: #a25900;
+      --error: #b42318;
+      --libre: #eef7f1;
+      --ocupado: #fff7e8;
+      --sombra: 0 8px 24px rgba(23, 32, 27, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .55; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px max(16px, env(safe-area-inset-left)) 14px max(16px, env(safe-area-inset-right));
+      background: rgba(255,255,255,.96);
+      border-bottom: 1px solid var(--borde);
+      backdrop-filter: blur(10px);
+    }
+    header h1 { margin: 0; font-size: 1.35rem; }
+    header .subtitulo { margin: 3px 0 0; color: var(--suave); font-size: .78rem; }
+    #loginBtn {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+
+    main {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 16px max(14px, env(safe-area-inset-left)) 40px max(14px, env(safe-area-inset-right));
+    }
+    #estado-carga { min-height: 1.35rem; margin: 4px 0 14px; color: var(--suave); }
+    #estado-carga.error { color: var(--error); font-weight: 700; }
     .vista { display: none; }
     body.logged-in .vista.activa { display: block; }
 
-    /* --- Menú inicial --- */
-    #menu .opciones { display: flex; flex-direction: column; gap: 14px; max-width: 420px; margin-top: 18px; }
-    #menu button { padding: 16px 18px; font-size: 1.05rem; font-weight: 600; border: 0; border-radius: 10px; cursor: pointer; color: #fff; text-align: left; }
-    #btnNueva { background: #1a7f37; }
-    #btnVer   { background: #2b6cb0; }
-    #menu button:disabled { opacity: .4; cursor: default; }
+    .barra-principal {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .barra-principal h2 { margin: 0; font-size: 1.15rem; }
+    .acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+    .boton {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+    .boton.primario { border-color: var(--primario); background: var(--primario); color: #fff; }
+    .boton.primario:hover { background: var(--primario-oscuro); }
 
-    /* --- Lista de ejecuciones existentes --- */
-    #ejecuciones ul { list-style: none; padding: 0; margin: 14px 0; max-width: 420px; }
-    #ejecuciones li { margin: 8px 0; }
-    #ejecuciones li button { width: 100%; padding: 12px 14px; font-size: 1rem; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; text-align: left; display: flex; justify-content: space-between; gap: 10px; }
-    #ejecuciones li button .nombre { font-weight: 600; }
-    #ejecuciones li button .fecha { color: #666; }
+    .resumen {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(100px, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+    .resumen article {
+      background: var(--panel);
+      border: 1px solid var(--borde);
+      border-radius: 11px;
+      padding: 12px;
+      box-shadow: var(--sombra);
+    }
+    .resumen strong { display: block; font-size: 1.45rem; }
+    .resumen span { color: var(--suave); font-size: .8rem; }
 
-    /* --- Árbol de tareas --- */
-    #progreso { color: #555; font-size: .9rem; margin: 10px 0; }
-    .piso { margin: 18px 0 6px; font-size: 1.1rem; font-weight: 700; border-bottom: 2px solid #1a7f37; padding-bottom: 3px; }
-    .zona { margin: 10px 0 4px 8px; font-weight: 700; color: #2b6cb0; }
-    .tarea { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-             margin: 4px 0 4px 20px; padding: 8px 10px; border: 1px solid #e2e2e2; border-radius: 8px; }
-    .tarea.hecha { background: #d5efdc; border-color: #b5dfc2; }
-    .tarea .texto { flex: 1; }
-    .tarea .hora { color: #777; font-size: .72rem; margin-left: 8px; white-space: nowrap; }
-    .tarea button { padding: 8px 14px; border: 0; border-radius: 8px; color: #fff; font-weight: 600; font-size: .9rem; cursor: pointer; white-space: nowrap; }
-    .tarea button.check { background: #1a7f37; }
-    .tarea button.pendiente { background: #fdeaea; color: #b00020; border: 1px solid #f2c0c0; }
-    .tarea button.foto  { background: #2b6cb0; }
-    .tarea button:disabled { opacity: .4; cursor: default; }
-    .tarea a.ver { font-size: .8rem; margin-left: 6px; white-space: nowrap; }
-    .tarea .botones { display: flex; gap: 6px; align-items: center; }
-    .tarea button.edit   { background: #1a7f37; }
-    .tarea button.cancel { background: #9ca3af; padding: 8px 10px; }
-    .tarea button.deshacer { background: #b45309; }
+    /* Botones de filtro rápido (grupo casa + grupo estado) */
+    .filtros-rapidos { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+    .boton-rapido { border-width: 2px; }
+    .boton-rapido.castefa.activo { background: #dcebf9; border-color: #315f86; color: #1e3d58; }
+    .boton-rapido.comarruga.activo { background: #ddf1e2; border-color: #256d4a; color: #185137; }
+    .boton-rapido.libres.activo { background: #f0f9f3; border-color: #4b9b69; color: #185137; }
+    .boton-rapido.frigo.activo { background: #e3edf7; border-color: #5b83a6; color: #264f70; }
+    .boton-rapido.congelador.activo { background: #cfe0f2; border-color: #2c567d; color: #1e3d58; }
 
-    /* Carrete de fotos */
-    #carrete { border: 1px solid #d0d7de; border-radius: 10px; padding: 10px; margin: 10px 0; background: #fafbfc; }
-    #carreteGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
-    #carreteGrid .fotoRoll { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: #444; }
-    #carreteGrid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid #e2e2e2; }
-    #carreteGrid .sinMini { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; font-size: 2rem; background: #eee; border-radius: 8px; }
-    #carreteGrid .pie { font-size: .68rem; word-break: break-all; }
+    /* Panel de filtros (encima del listado, plegado por defecto) */
+    #btnFiltros { margin: 0 0 12px; }
+    .filtros-panel {
+      margin: 0 0 16px;
+      border: 1px solid var(--borde);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--sombra);
+      padding: 15px;
+    }
+    .rejilla-filtros {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    label.campo, .campo { display: flex; flex-direction: column; gap: 5px; font-size: .8rem; font-weight: 700; }
+    label.campo input, label.campo select, label.campo textarea {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 8px 10px;
+      font-weight: 400;
+    }
+    label.campo textarea { resize: vertical; min-height: 76px; }
+    .filtros-acciones { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 
-    .barra { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
-    .barra button { padding: 8px 14px; border: 1px solid #d0d7de; border-radius: 8px; background: #f6f8fa; cursor: pointer; font-weight: 600; }
-    h2 { font-size: 1.1rem; margin: 16px 0 4px; }
-    .vacio { color: #777; margin: 12px 0; }
+    /* Combos de multiselección */
+    .ms { position: relative; }
+    .ms-boton {
+      width: 100%;
+      min-height: 40px;
+      text-align: left;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 8px 26px 8px 10px;
+      font-weight: 400;
+      position: relative;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ms-boton::after {
+      content: "▾";
+      position: absolute;
+      right: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--suave);
+    }
+    .ms-boton.con-seleccion { border-color: var(--primario); background: #f2f8f5; font-weight: 700; }
+    .ms-panel {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      max-height: 230px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      box-shadow: var(--sombra);
+      padding: 5px;
+    }
+    .ms-panel label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 8px;
+      border-radius: 7px;
+      font-weight: 400;
+      font-size: .82rem;
+      cursor: pointer;
+      overflow-wrap: anywhere;
+    }
+    .ms-panel label:hover { background: #f2f5f3; }
+    .ms-panel input[type=checkbox] { width: 16px; height: 16px; flex: none; }
+    .ms-vacia { margin: 4px; color: var(--suave); font-size: .78rem; font-weight: 400; }
+
+    #listaTuppers { display: flex; flex-direction: column; gap: 10px; }
+    .tupper {
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 12px;
+      border: 1px solid var(--borde);
+      border-radius: 14px;
+      background: var(--panel);
+      padding: 10px;
+      box-shadow: var(--sombra);
+    }
+    .tupper.ocupado { border-left: 6px solid #d88922; }
+    .tupper.libre { border-left: 6px solid #4b9b69; }
+    /* Matiz por casa + tono por estado:
+       oscuro = congelador, medio = frigo, claro = libre, blanco = otra ubicación u otras casas */
+    .tupper.casa-castefa.tono-oscuro   { background: #c9def4; }
+    .tupper.casa-castefa.tono-medio    { background: #dcebf9; }
+    .tupper.casa-castefa.tono-claro    { background: #eef5fc; }
+    .tupper.casa-comarruga.tono-oscuro { background: #c9e9d1; }
+    .tupper.casa-comarruga.tono-medio  { background: #ddf1e2; }
+    .tupper.casa-comarruga.tono-claro  { background: #f0f9f3; }
+    .tupper.casa-naranja.tono-oscuro   { background: #f6dcb9; }
+    .tupper.casa-naranja.tono-medio    { background: #fae9d1; }
+    .tupper.casa-naranja.tono-claro    { background: #fdf4e7; }
+
+    .foto-marco {
+      position: relative;
+      width: 116px;
+      height: 116px;
+      border-radius: 11px;
+      overflow: hidden;
+      border: 1px solid var(--borde);
+      background: #edf1ee;
+    }
+    .foto-marco img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .foto-marco .sin-foto, .foto-marco .cargando-foto {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      color: var(--suave);
+      text-align: center;
+      font-size: .78rem;
+    }
+    .foto-marco button { position: absolute; inset: 0; border: 0; background: transparent; padding: 0; }
+    .vista-previa-tupper { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+    .comida-principal {
+      margin: 0 0 4px;
+      font-weight: 800;
+      font-size: clamp(1.25rem, 3.7vw, 1.7rem);
+      line-height: 1.08;
+      overflow-wrap: anywhere;
+    }
+    .comida-principal.vacio { color: var(--suave); font-weight: 700; }
+    .vista-previa-tupper h3 { margin: 0; color: var(--suave); font-size: .9rem; font-weight: 700; }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #edf2ef;
+      color: #33423a;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .badge.estado { background: #eaf2f9; color: #264f70; }
+    .editar {
+      margin-top: auto;
+      border: 0;
+      border-radius: 8px;
+      background: var(--secundario);
+      color: #fff;
+      padding: 8px 10px;
+      font-weight: 700;
+      font-size: .82rem;
+    }
+    .vacio-lista {
+      border: 1px dashed var(--borde);
+      border-radius: 12px;
+      padding: 28px;
+      color: var(--suave);
+      background: #fff;
+      text-align: center;
+    }
+
+    dialog {
+      width: min(760px, calc(100% - 18px));
+      max-height: min(96dvh, 900px);
+      border: 0;
+      border-radius: 14px;
+      padding: 0;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+    dialog::backdrop { background: rgba(20, 30, 24, .58); }
+    .dialogo-cabecera {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--borde);
+      background: #fff;
+    }
+    .dialogo-cabecera h2 { margin: 0; font-size: 1.08rem; }
+    .cerrar-dialogo { border: 0; background: transparent; font-size: 1.45rem; line-height: 1; }
+    #formEditor { padding: 10px 12px 0; overflow: auto; }
+    .solo-lectura {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px 10px;
+      padding: 9px;
+      border-radius: 9px;
+      background: #f5f7f6;
+      margin-bottom: 8px;
+    }
+    .dato { min-width: 0; }
+    .dato dt { color: var(--suave); font-size: .66rem; font-weight: 700; margin-bottom: 1px; }
+    .dato dd { margin: 0; font-size: .82rem; overflow-wrap: anywhere; }
+    .rejilla-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .rejilla-editor.fila-cuatro { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .ancho-completo { grid-column: 1 / -1; }
+    .nota-editor { margin: 5px 0 9px; color: var(--suave); font-size: .72rem; }
+    .campo-editor {
+      padding: 7px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+    }
+    .campo-editor.inactivo { opacity: .5; }
+    .campo-destacado { background: #fff2cc; border-color: #efd480; }
+    #formEditor label.campo { font-size: .72rem; gap: 3px; }
+    #formEditor label.campo input, #formEditor label.campo select, #formEditor label.campo textarea {
+      min-height: 37px;
+      padding: 7px 8px;
+    }
+    #formEditor label.campo textarea { height: 37px; min-height: 37px; resize: none; }
+    #campoCasaLibre { display: flex; margin-top: 8px; }
+    .historial-control { margin-top: 10px; }
+    #btnHistorial { width: 100%; text-align: center; }
+    .historial-usos {
+      margin: 8px 0 0;
+      padding: 9px;
+      border: 1px solid var(--borde);
+      border-radius: 10px;
+      background: #fbfcfb;
+    }
+    .historial-usos h3 { margin: 0 0 8px; font-size: .92rem; }
+    #historialUsos { display: flex; flex-direction: column; gap: 7px; }
+    .uso-anterior { border: 1px solid var(--borde); border-radius: 8px; padding: 8px; background: #fff; }
+    .uso-anterior-cabecera { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: .75rem; }
+    .uso-anterior-cabecera span { color: var(--suave); }
+    .datos-historial { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 9px; margin: 0; }
+    .datos-historial a { overflow-wrap: anywhere; }
+    .historial-vacio { margin: 0; color: var(--suave); font-size: .82rem; }
+    .dialogo-acciones {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin: 10px -12px 0;
+      padding: 9px 12px max(9px, env(safe-area-inset-bottom));
+      border-top: 1px solid var(--borde);
+      background: rgba(255,255,255,.97);
+    }
+
+    @media (max-width: 720px) {
+      main { padding-top: 10px; }
+      .resumen { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+      .resumen article { padding: 8px 4px; text-align: center; }
+      .resumen strong { font-size: 1.1rem; }
+      .resumen span { font-size: .58rem; }
+      .boton-rapido { padding: 7px 9px; font-size: .8rem; }
+      .filtros-panel { padding: 10px; }
+      .tupper { grid-template-columns: 88px minmax(0, 1fr); gap: 9px; padding: 8px; }
+      .foto-marco { width: 88px; height: 88px; }
+      .comida-principal { font-size: 1.2rem; }
+      .badges { margin: 6px 0; gap: 4px; }
+      .badge { font-size: .66rem; min-height: 23px; padding: 3px 6px; }
+      .editar { padding: 7px 9px; font-size: .76rem; }
+      dialog { width: calc(100% - 8px); max-height: 98dvh; border-radius: 11px; }
+      .dialogo-cabecera { padding: 9px 11px; }
+      #formEditor { padding: 8px 8px 0; }
+      .solo-lectura { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 7px; padding: 7px; }
+      .rejilla-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+      .rejilla-editor.fila-cuatro { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+      .campo-editor { padding: 5px; }
+      .fila-cuatro .campo-editor { padding: 4px 3px; }
+      #formEditor .fila-cuatro label.campo { font-size: .58rem; }
+      #formEditor .fila-cuatro label.campo input, #formEditor .fila-cuatro label.campo select { font-size: .78rem; padding: 4px 3px; }
+      #formEditor label.campo input, #formEditor label.campo select, #formEditor label.campo textarea { min-height: 35px; padding: 6px; }
+      #formEditor label.campo textarea { height: 35px; min-height: 35px; }
+      .dialogo-acciones { margin-left: -8px; margin-right: -8px; padding-left: 8px; padding-right: 8px; }
+    }
+
+    @media (max-width: 380px) {
+      .tupper { grid-template-columns: 76px minmax(0, 1fr); }
+      .foto-marco { width: 76px; height: 76px; }
+      .comida-principal { font-size: 1.08rem; }
+    }
   </style>
 </head>
 <body>
-
   <header>
-    <h1>PSCM</h1>
+    <div>
+      <h1>Gestión de tuppers</h1>
+      <p class="subtitulo">Inventario, contenido, casa y ubicación</p>
+    </div>
     <button id="loginBtn" type="button">Iniciar sesión</button>
   </header>
-  <p class="build">Generado el 20/07/2026</p>
 
-  <p id="estado-carga">Inicia sesión para empezar.</p>
+  <main>
+    <p id="estado-carga">Inicia sesión para empezar.</p>
 
-  <!-- Vista 1: menú inicial -->
-  <section id="menu" class="vista">
-    <h2>¿Qué quieres hacer?</h2>
-    <div class="opciones">
-      <button id="btnNueva" type="button">▶ Realizar una lista completa</button>
-      <button id="btnVer" type="button">📂 Visualizar una lista existente</button>
+    <section id="inventario" class="vista">
+      <div class="barra-principal">
+        <h2>Inventario de tuppers</h2>
+        <div class="acciones">
+          <button id="btnRecargar" class="boton" type="button">↻ Recargar</button>
+        </div>
+      </div>
+
+      <section class="resumen" aria-label="Resumen del inventario">
+        <article><strong id="totalTuppers">0</strong><span>Total</span></article>
+        <article><strong id="totalOcupados">0</strong><span>Ocupados</span></article>
+        <article><strong id="totalLibres">0</strong><span>Libres</span></article>
+        <article><strong id="congCastefa">0</strong><span>Castefa Congelador</span></article>
+        <article><strong id="congComarruga">0</strong><span>Comarruga Congelador</span></article>
+      </section>
+
+      <div class="filtros-rapidos" role="group" aria-label="Filtros rápidos">
+        <button id="btnCasaCastefa" class="boton boton-rapido castefa" type="button" aria-pressed="false">Castefa</button>
+        <button id="btnCasaComarruga" class="boton boton-rapido comarruga" type="button" aria-pressed="false">Comarruga</button>
+        <button id="btnEstadoLibres" class="boton boton-rapido libres" type="button" aria-pressed="false">Tupper libres</button>
+        <button id="btnEstadoFrigo" class="boton boton-rapido frigo" type="button" aria-pressed="false">Frigo</button>
+        <button id="btnEstadoCongelador" class="boton boton-rapido congelador" type="button" aria-pressed="false">Congelador</button>
+      </div>
+
+      <button id="btnFiltros" class="boton" type="button" aria-expanded="false" aria-controls="panelFiltros">Mostrar filtros</button>
+
+      <div id="panelFiltros" class="filtros-panel" hidden>
+        <div id="rejillaFiltros" class="rejilla-filtros"></div>
+        <div class="filtros-acciones">
+          <button id="btnLimpiar" class="boton" type="button">Limpiar filtros</button>
+        </div>
+      </div>
+
+      <div id="listaTuppers" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="editor">
+    <div class="dialogo-cabecera">
+      <h2 id="tituloEditor">Tupper</h2>
+      <button id="btnCerrarEditor" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
     </div>
-  </section>
+    <form id="formEditor" method="dialog">
+      <input id="editorIndice" type="hidden" />
+      <div id="datosFijos" class="solo-lectura"></div>
+      <p class="nota-editor">Los datos que definen el tupper son de solo lectura y se cambian en OneDrive.</p>
 
-  <!-- Vista 2: ejecuciones existentes -->
-  <section id="ejecuciones" class="vista">
-    <div class="barra"><button id="btnVolver1" type="button">← Volver</button></div>
-    <h2>Listas existentes</h2>
-    <ul id="listaEjecuciones"></ul>
-  </section>
+      <div class="rejilla-editor fila-cuatro">
+        <label class="campo campo-editor campo-destacado">Ocupado
+          <select id="eOcupado" required><option value="no">No</option><option value="si">Sí</option></select>
+        </label>
+        <label class="campo campo-editor">En q casa está
+          <select id="eCasaTipo" required>
+            <option value="Comarruga">Comarruga</option><option value="Castefa">Castefa</option><option value="3">3</option><option value="4">4</option><option value="otra">Otra ubicación</option>
+          </select>
+        </label>
+        <label class="campo campo-editor campo-destacado">Ubicación
+          <select id="eUbicacion"><option value="">Selecciona</option><option value="Congelador">Congelador</option><option value="Frigo">Frigo</option><option value="Fuera">Fuera</option></select>
+        </label>
+        <label class="campo campo-editor">Fecha preparación<input id="eFechaPreparacion" type="date" /></label>
+      </div>
 
-  <!-- Vista 3: árbol de tareas de una ejecución -->
-  <section id="arbol" class="vista">
-    <div class="barra">
-      <button id="btnVolver2" type="button">← Volver al menú</button>
-      <button id="btnVerHechas" type="button">Ver realizadas: SÍ</button>
-      <button id="btnCarrete" type="button">🎞 Carrete</button>
-    </div>
-    <h2 id="tituloEjecucion"></h2>
-    <div id="progreso"></div>
-    <div id="carrete" hidden>
-      <div class="barra"><button id="btnCerrarCarrete" type="button">✕ Cerrar carrete</button></div>
-      <div id="carreteGrid"></div>
-    </div>
-    <div id="tareas"></div>
-  </section>
+      <label id="campoCasaLibre" class="campo campo-editor" hidden>Otra casa
+        <input id="eCasaLibre" type="text" maxlength="120" />
+      </label>
 
-  <!-- Input oculto para hacer fotos (cámara trasera) -->
-  <input type="file" id="fotoInput" accept="image/*" capture="environment" style="display:none" />
+      <div class="rejilla-editor" style="margin-top:6px">
+        <label class="campo campo-editor campo-destacado">Comida<input id="eComida" type="text" maxlength="500" /></label>
+        <label class="campo campo-editor">Url cookido
+          <input id="eUrlCookido" type="url" maxlength="1000" placeholder="https://… (opcional)" inputmode="url" />
+        </label>
+        <label class="campo campo-editor">Gluten
+          <select id="eGluten"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option><option value="NPC/NPI">NPC/NPI</option></select>
+        </label>
+        <label class="campo campo-editor">Leche
+          <select id="eLeche"><option value="">Selecciona</option><option value="Sí">Sí</option><option value="No">No</option><option value="NPC/NPI">NPC/NPI</option></select>
+        </label>
+      </div>
+
+      <div class="historial-control">
+        <button id="btnHistorial" class="boton" type="button" aria-expanded="false" aria-controls="panelHistorial">Mostrar los 3 usos anteriores</button>
+      </div>
+      <section id="panelHistorial" class="historial-usos" aria-labelledby="tituloHistorial" hidden>
+        <h3 id="tituloHistorial">Tres usos anteriores</h3>
+        <div id="historialUsos"></div>
+      </section>
+
+      <div class="dialogo-acciones">
+        <button id="btnCancelarEditor" class="boton" type="button">Cancelar</button>
+        <button id="btnGuardarEditor" class="boton primario" type="submit">Guardar cambios</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app.js?v=202607201100"></script>
+  <script src="app.js?v=2026072210"></script>
 </body>
 </html>
