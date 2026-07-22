@@ -1,753 +1,625 @@
-// app.js — Gestión de tuppers sobre OneDrive
+// app.js — PSCM (listas de tareas con validación por check o foto, sobre OneDrive)
 //
-// Estructura esperada en OneDrive:
-//   ZZZ_SG_Tuppers/
-//     tuppers.csv
-//     fotos/                       ← opcional
-//       tupper_azul.jpg
+// Estructura en OneDrive:
+//   ZZZ_SG_pscm/                      ← carpeta en la raíz (sin distinguir mayúsculas)
+//     pscm.csv                        ← plantilla: PISO;ZONA;ACCION  (headerless, ";")
+//     2607151032/                     ← una subcarpeta por ejecución (YYMMDDHHMM)
+//       2607151032.csv                ← estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA;USUARIO;MARCA
+//       003_Foto_armario_izquierda.jpg  ← fotos de esa ejecución
 //
-// Columnas de tuppers.csv (separador ";"):
-// Nombre tupper;Comentarios tupper;Material tapa;Material tupper;Fecha compra tupper;
-// Foto tupper;Ocupado;En q casa está;Ubicación;Comida;Url cookido;Gluten;Leche;Fecha preparación;Historial
-//
-// La web solo modifica: Ocupado, En q casa está, Ubicación, Comida, Url cookido, Gluten, Leche y Fecha preparación.
-// El resto de campos se modifica directamente en OneDrive.
-// Casas predefinidas: Comarruga, Castefa, 3, 4 (antes CM y CS; el CSV usa ya los nombres largos).
-// Gluten/Leche admiten: Sí, No, NPC/NPI.
+// Si la ACCION empieza por "foto" → se valida haciendo una foto; si no → check.
 
-// ====== Ajustes ======
-const CARPETA_RAIZ = "ZZZ_SG_Tuppers";
-const FILE_DATOS = "tuppers.csv";
-const GRAPH = "https://graph.microsoft.com/v1.0";
+// ====== AJUSTES ======
+const CARPETA_RAIZ = "ZZZ_SG_pscm";   // carpeta en la raíz de OneDrive (case-insensitive)
+const FILE_PLANTILLA = "pscm.csv";    // plantilla de tareas (3 columnas, sin cabecera)
+const RE_EJECUCION = /^\d{10}$/;      // nombre de ejecución: YYMMDDHHMM
 // =====================
 
-// Misma arquitectura de autenticación MSAL que la app de referencia.
-const REDIRECT_PAGE =
-  "https://atxcclt-26.github.io/atxcclt/Tuppers/";
+// 1. MSAL (misma arquitectura que "Revisión de cargos")
+const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const REDIRECT_PAGE = window.location.origin + window.location.pathname;
 const msalConfig = {
-  auth: {
-    clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696",
-    redirectUri: REDIRECT_PAGE
-  },
+  auth: { clientId: "7765de16-766b-4051-b73d-d7167f5897dc", redirectUri: REDIRECT_PAGE },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
-  system: {
-    loggerOptions: {
-      logLevel: msal.LogLevel.Warning,
-      loggerCallback: (nivel, mensaje, contieneDatosPersonales) => {
-        if (!contieneDatosPersonales) console.log(`[MSAL][${nivel}]`, mensaje);
-      }
-    }
-  }
+  system: { loggerOptions: { logLevel: msal.LogLevel.Warning, loggerCallback: (l, m, p) => { if (!p) console.log(`[MSAL][${l}]`, m); } } }
 };
 const msalInstance = new msal.PublicClientApplication(msalConfig);
 const loginRequest = { scopes: ["User.Read", "Files.ReadWrite"] };
-const fileScopes = { scopes: ["Files.ReadWrite"] };
+const fileScopes   = { scopes: ["Files.ReadWrite"] };
 
-const COLUMNAS = [
-  { key: "nombreTupper", label: "Nombre tupper", editable: false, aliases: ["nombre tupper"] },
-  { key: "comentariosTupper", label: "Comentarios tupper", editable: false, aliases: ["comentarios tupper", "comentarios tuppers", "comentario tupper"] },
-  { key: "materialTapa", label: "Material tapa", editable: false, aliases: ["material tapa"] },
-  { key: "materialTupper", label: "Material tupper", editable: false, aliases: ["material tupper"] },
-  { key: "fechaCompraTupper", label: "Fecha compra tupper", editable: false, aliases: ["fecha compra tupper"] },
-  { key: "fotoTupper", label: "Foto tupper", editable: false, aliases: ["foto tupper", "foto"] },
-  { key: "ocupado", label: "Ocupado", editable: true, aliases: ["ocupado"] },
-  { key: "enQueCasaEsta", label: "En q casa está", editable: true, aliases: ["en q casa esta", "en que casa esta", "casa"] },
-  { key: "ubicacion", label: "Ubicación", editable: true, aliases: ["ubicacion", "estado"] },
-  { key: "comida", label: "Comida", editable: true, aliases: ["comida"] },
-  { key: "urlCookido", label: "Url cookido", editable: true, aliases: ["url cookido", "url cooked", "cookido"] },
-  { key: "gluten", label: "Gluten", editable: true, aliases: ["gluten"] },
-  { key: "leche", label: "Leche", editable: true, aliases: ["leche"] },
-  { key: "fechaPreparacion", label: "Fecha preparación", editable: true, aliases: ["fecha preparacion"] },
-  { key: "historial", label: "Historial", editable: false, interno: true, aliases: ["historial"] }
-];
-
-const CAMPOS_FIJOS = COLUMNAS.filter(c => !c.editable && !c.interno);
-const CASAS_PREDEFINIDAS = ["Comarruga", "Castefa", "3", "4"];
-const OPCIONES_GLUTEN_LECHE = ["Sí", "No", "NPC/NPI"];
-const ORDEN_CASAS = new Map([["comarruga", 0], ["castefa", 1], ["3", 2], ["4", 3]]);
-const ORDEN_UBICACIONES = new Map([["congelador", 0], ["frigo", 1], ["fuera", 2], ["", 3]]);
-const CAMPOS_HISTORIAL = ["ocupado", "enQueCasaEsta", "ubicacion", "comida", "urlCookido", "gluten", "leche", "fechaPreparacion"];
-const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
-
+// Estado global
 const G = {
-  driveId: null,
-  folderId: null,
-  registros: [],
-  fotoCache: new Map(),
-  cargaId: 0
+  driveId: null,           // drive de la carpeta (null = mi OneDrive; con valor = carpeta compartida)
+  folderId: null,          // id de ZZZ_SG_pscm
+  plantilla: [],           // [[piso, zona, accion], ...] leída de pscm.csv
+  listaHoy: null,          // nombre YYMMDDHHMM de la lista ya creada hoy (o null)
+  ejecucion: null          // { nombre, subfolderId, stateName, rows: [[piso,zona,accion,estado,foto,hora],...] }
 };
-
+// Estado de la interfaz del árbol
+const UI = {
+  verHechas: true,         // selector "Ver realizadas SÍ/NO"
+  editables: new Set()     // idx de tareas hechas desbloqueadas con "Editar"
+};
 let inicializado = false;
-let guardando = false;
+let guardando = false, guardarDeNuevo = false;
+let fotoPendiente = null;  // idx de la fila cuya foto se está pidiendo
+let syncTimer = null;      // polling de sincronización multi-dispositivo
+let minTimer = null;       // refresco del "hace x min" en tareas hechas
+const SYNC_MS = 20000;     // intervalo del polling (ms)
 
-// ---------- Utilidades ----------
-function $(id) { return document.getElementById(id); }
-function setEstado(mensaje, error = false) {
-  const el = $("estado-carga");
-  if (!el) return;
-  el.textContent = mensaje;
-  el.classList.toggle("error", Boolean(error));
+// ---------- UI helpers ----------
+function setEstado(msg, err = false) {
+  const el = document.getElementById("estado-carga");
+  if (el) { el.textContent = msg; el.classList.toggle("error", !!err); }
 }
+function escapeHtml(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function norm(v) { return (v || "").trim().toLowerCase(); }
 function mostrarVista(id) {
   document.querySelectorAll(".vista").forEach(v => v.classList.toggle("activa", v.id === id));
 }
-function escapeHtml(valor) {
-  return String(valor == null ? "" : valor)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+function esFoto(accion) { return norm(accion).startsWith("foto"); }
+// Nombre de fichero seguro a partir de la acción (para la foto)
+function slug(s) {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "foto";
 }
-function quitarAcentos(valor) {
-  return String(valor == null ? "" : valor).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-function norm(valor) { return quitarAcentos(valor).trim().toLowerCase(); }
-function normalizarCabecera(valor) { return norm(valor).replace(/[^a-z0-9]+/g, " ").trim(); }
-function esSi(valor) { return ["si", "sí", "yes", "1", "true", "x"].includes(norm(valor)); }
-function canonSiNo(valor, vacioPermitido = true) {
-  const n = norm(valor);
-  if (!n) return vacioPermitido ? "" : "No";
-  if (["si", "sí", "yes", "1", "true", "x"].includes(n)) return "Sí";
-  if (["no", "0", "false"].includes(n)) return "No";
-  return String(valor).trim();
-}
-function valorVisible(valor, alternativa = "—") {
-  const v = String(valor == null ? "" : valor).trim();
-  return v || alternativa;
-}
-function encodeGraphPath(ruta) {
-  return String(ruta || "").split("/").filter(Boolean).map(encodeURIComponent).join("/");
-}
-function normalizarRutaFoto(ruta) {
-  return String(ruta || "").trim().replace(/^\/+/, "");
-}
-function esUrl(ruta) { return /^(https?:|data:|blob:)/i.test(String(ruta || "").trim()); }
-function fechaParaInput(valor) {
-  const v = String(valor || "").trim();
-  if (!v) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const m = v.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  return "";
-}
-function fechaVisible(valor) {
-  const iso = fechaParaInput(valor);
-  if (!iso) return valorVisible(valor);
-  const [a, m, d] = iso.split("-");
-  return `${d}/${m}/${a}`;
-}
-function hoyIso() {
-  const d = new Date();
+// Nombre de ejecución: YYMMDDHHMM (hora local)
+function nombreEjecucion(d = new Date()) {
   const p = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return String(d.getFullYear()).slice(2) + p(d.getMonth() + 1) + p(d.getDate()) + p(d.getHours()) + p(d.getMinutes());
+}
+function nombreLegible(n) { // "2607151032" → "15/07/26 10:32"
+  return `${n.slice(4, 6)}/${n.slice(2, 4)}/${n.slice(0, 2)} ${n.slice(6, 8)}:${n.slice(8, 10)}`;
+}
+function hoyPrefijo() { // YYMMDD de hoy (hora local)
+  const p = n => String(n).padStart(2, "0"); const d = new Date();
+  return String(d.getFullYear()).slice(2) + p(d.getMonth() + 1) + p(d.getDate());
+}
+function fechaLarga(n) { // "2607151032" → "15/07/2026 10:32"
+  return `${n.slice(4, 6)}/${n.slice(2, 4)}/20${n.slice(0, 2)} ${n.slice(6, 8)}:${n.slice(8, 10)}`;
+}
+function haceDias(n) { // días naturales transcurridos desde la ejecución
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const f = new Date(2000 + Number(n.slice(0, 2)), Number(n.slice(2, 4)) - 1, Number(n.slice(4, 6)));
+  const dias = Math.round((hoy - f) / 86400000);
+  return dias <= 0 ? "hoy" : dias === 1 ? "ayer" : `hace ${dias} días`;
+}
+// Primera palabra del nombre de la cuenta activa (fallback: parte local del email)
+function nombreUsuario() {
+  const a = msalInstance.getActiveAccount();
+  const n = (a && (a.name || a.username)) || "";
+  return n.split(/[\s@]+/)[0] || "";
+}
+// Marca temporal completa "YYYY-MM-DD HH:MM:SS" (hora local)
+function ahoraTS() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+// Minutos transcurridos desde la validación de una fila (usa MARCA; si falta, fecha de la lista + HORA)
+function haceTexto(row, nombreLista) {
+  let d = null;
+  const m = (row[7] || "").match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/);
+  if (m) d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  else if (row[5]) { // filas antiguas sin MARCA: fecha de la lista + HORA
+    const h = row[5].split(":");
+    d = new Date(2000 + +nombreLista.slice(0, 2), +nombreLista.slice(2, 4) - 1, +nombreLista.slice(4, 6), +h[0] || 0, +h[1] || 0, +h[2] || 0);
+  }
+  if (!d || isNaN(d)) return "";
+  const mins = Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+  if (mins < 1) return "ahora mismo";
+  if (mins < 60) return `hace ${mins} min`;
+  if (mins < 1440) return `hace ${Math.floor(mins / 60)} h ${mins % 60} min`;
+  return `hace ${Math.floor(mins / 1440)} día(s)`;
 }
 
-// ---------- CSV ----------
-function parseCSV(texto, delimitador = ";") {
-  const filas = [];
-  let fila = [], campo = "", i = 0, entreComillas = false;
-  while (i < texto.length) {
-    const c = texto[i];
-    if (entreComillas) {
-      if (c === '"') {
-        if (texto[i + 1] === '"') { campo += '"'; i += 2; continue; }
-        entreComillas = false; i++; continue;
-      }
-      campo += c; i++; continue;
-    }
-    if (c === '"') { entreComillas = true; i++; continue; }
-    if (c === delimitador) { fila.push(campo); campo = ""; i++; continue; }
+// ---------- CSV (";" — mismo parser que la app hermana) ----------
+function parseCSV(text, delim = ";") {
+  const rows = []; let row = [], field = "", i = 0, q = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i += 2; continue; } q = false; i++; continue; } field += c; i++; continue; }
+    if (c === '"') { q = true; i++; continue; }
+    if (c === delim) { row.push(field); field = ""; i++; continue; }
     if (c === "\r") { i++; continue; }
-    if (c === "\n") { fila.push(campo); filas.push(fila); fila = []; campo = ""; i++; continue; }
-    campo += c; i++;
+    if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+    field += c; i++;
   }
-  if (campo.length || fila.length) { fila.push(campo); filas.push(fila); }
-  return filas.filter(f => f.some(v => String(v || "").trim() !== ""));
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(f => (f || "").trim() !== ""));
 }
-function serializarCampo(valor, delimitador) {
-  const v = valor == null ? "" : String(valor);
-  return /["\n\r]/.test(v) || v.includes(delimitador) ? `"${v.replace(/"/g, '""')}"` : v;
-}
-function serializeCSV(filas, delimitador = ";") {
-  return filas.map(f => f.map(v => serializarCampo(v, delimitador)).join(delimitador)).join("\r\n");
-}
-function pareceCabecera(fila) {
-  if (!fila || !fila.length) return false;
-  const normalizadas = fila.map(normalizarCabecera);
-  const coincidencias = COLUMNAS.filter(col => col.aliases.some(a => normalizadas.includes(normalizarCabecera(a)))).length;
-  return coincidencias >= Math.min(5, COLUMNAS.length);
-}
-function crearMapaCabecera(cabecera) {
-  const mapa = new Map();
-  cabecera.forEach((nombre, indice) => mapa.set(normalizarCabecera(nombre), indice));
-  const formatoNuevo = mapa.has(normalizarCabecera("En q casa está")) || mapa.has(normalizarCabecera("En que casa está"));
-
-  return COLUMNAS.map((col, indicePorDefecto) => {
-    let aliases = col.aliases;
-    // Compatibilidad con la versión anterior: "Ubicación" era la casa y "Estado" era Frigo/Congelador/Fuera.
-    if (col.key === "enQueCasaEsta" && !formatoNuevo) aliases = ["ubicacion", ...aliases];
-    if (col.key === "ubicacion") aliases = formatoNuevo ? ["ubicacion", "estado"] : ["estado", "ubicacion"];
-    for (const alias of aliases) {
-      const encontrado = mapa.get(normalizarCabecera(alias));
-      if (encontrado !== undefined) return encontrado;
-    }
-    return indicePorDefecto;
-  });
-}
-function parsearHistorial(valor) {
-  if (!valor) return [];
-  try {
-    const lista = JSON.parse(valor);
-    return Array.isArray(lista) ? lista.filter(v => v && typeof v === "object").slice(0, 3) : [];
-  } catch (error) {
-    console.warn("Historial no válido; se ignora.", error);
-    return [];
-  }
-}
-function serializarHistorial(lista) {
-  return JSON.stringify((Array.isArray(lista) ? lista : []).slice(0, 3));
-}
-function registroDesdeFila(fila, mapaIndices, indiceOriginal) {
-  const registro = { _indiceOriginal: indiceOriginal };
-  COLUMNAS.forEach((col, i) => registro[col.key] = String(fila[mapaIndices[i]] ?? "").trim());
-  registro.ocupado = canonSiNo(registro.ocupado, false);
-  registro.gluten = canonSiNo(registro.gluten, true);
-  registro.leche = canonSiNo(registro.leche, true);
-  registro.historial = serializarHistorial(parsearHistorial(registro.historial));
-  if (!esSi(registro.ocupado)) {
-    registro.ubicacion = "";
-    registro.comida = "";
-    registro.urlCookido = "";
-    registro.gluten = "";
-    registro.leche = "";
-    registro.fechaPreparacion = "";
-  }
-  return registro;
-}
-function filasParaGuardar() {
-  const cabecera = COLUMNAS.map(c => c.label);
-  const datos = G.registros
-    .slice()
-    .sort((a, b) => a._indiceOriginal - b._indiceOriginal)
-    .map(registro => COLUMNAS.map(col => String(registro[col.key] ?? "").trim()));
-  return [cabecera, ...datos];
-}
+function serialF(v, d) { v = v == null ? "" : String(v); return /["\n\r]/.test(v) || v.includes(d) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function serializeCSV(rows, d = ";") { return rows.map(r => r.map(f => serialF(f, d)).join(d)).join("\r\n"); }
 
 // ---------- Graph / OneDrive ----------
-function itemBase() {
-  return G.driveId ? `${GRAPH}/drives/${G.driveId}` : `${GRAPH}/me/drive`;
-}
-async function getToken(request) {
-  const active = msalInstance.getActiveAccount();
-  const req = Object.assign({}, request, { account: request.account || active });
-  try {
-    return (await msalInstance.acquireTokenSilent(req)).accessToken;
-  } catch (error) {
-    console.warn("Adquisición silenciosa falló; se redirige al inicio de sesión.", error && error.errorCode);
-    await msalInstance.acquireTokenRedirect(request);
-    return null;
-  }
-}
-async function gFetch(url, opciones = {}) {
-  const token = await getToken(fileScopes);
-  if (!token) throw new Error("No se pudo obtener el permiso de OneDrive.");
-  opciones.headers = Object.assign({ Authorization: `Bearer ${token}` }, opciones.headers || {});
-  return fetch(url, opciones);
-}
+const GRAPH = "https://graph.microsoft.com/v1.0";
+function itemBase() { return G.driveId ? `${GRAPH}/drives/${G.driveId}` : `${GRAPH}/me/drive`; }
+
+// Localiza ZZZ_SG_pscm en la raíz (soporta carpeta compartida → driveId, como la app hermana)
 async function localizarCarpeta(token) {
-  const headers = { Authorization: `Bearer ${token}` };
-  let url = `${GRAPH}/me/drive/root/children?$top=200`;
-  const hijos = [];
-  while (url) {
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) {
-        throw new Error(`Sin permiso para OneDrive (HTTP ${res.status}). Comprueba Files.ReadWrite en Azure.`);
-      }
-      throw new Error(`No se pudo leer la raíz de OneDrive (HTTP ${res.status}).`);
-    }
-    const json = await res.json();
-    hijos.push(...(json.value || []));
-    url = json["@odata.nextLink"] || null;
+  const H = { Authorization: `Bearer ${token}` };
+  const r = await fetch(`${GRAPH}/me/drive/root/children?$top=200`, { headers: H });
+  if (!r.ok) {
+    if (r.status === 401 || r.status === 403)
+      throw new Error(`Sin permiso (HTTP ${r.status}). ¿Añadiste "Files.ReadWrite" en Azure? resetMsal() y reentra.`);
+    throw new Error("raíz " + r.status + " " + (await r.text()));
   }
+  const hijos = (await r.json()).value || [];
   const objetivo = CARPETA_RAIZ.toLowerCase();
-  const carpeta = hijos.find(item => (item.folder || item.remoteItem) && String(item.name || "").toLowerCase() === objetivo);
-  if (!carpeta) return false;
-  if (carpeta.remoteItem) {
-    G.driveId = carpeta.remoteItem.parentReference && carpeta.remoteItem.parentReference.driveId;
-    G.folderId = carpeta.remoteItem.id;
-  } else {
-    G.driveId = null;
-    G.folderId = carpeta.id;
+  const c = hijos.find(it => (it.folder || it.remoteItem) && (it.name || "").toLowerCase() === objetivo);
+  if (!c) {
+    setEstado(`No existe la carpeta "${CARPETA_RAIZ}" en la raíz de tu OneDrive.`, true);
+    return false;
   }
+  if (c.remoteItem) { G.driveId = c.remoteItem.parentReference && c.remoteItem.parentReference.driveId; G.folderId = c.remoteItem.id; }
+  else { G.driveId = null; G.folderId = c.id; }
   return true;
 }
+
+async function gFetch(url, opts = {}) {
+  const token = await getToken(fileScopes);
+  opts.headers = Object.assign({ Authorization: `Bearer ${token}` }, opts.headers || {});
+  const res = await fetch(url, opts);
+  return res;
+}
+
+// Descarga un fichero (por ruta relativa a la carpeta raíz de la app)
 async function descargarTexto(ruta) {
-  const path = encodeGraphPath(ruta);
-  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}:/content`);
-  if (!res.ok) {
-    if (res.status === 404) throw new Error(`No existe "${ruta}" dentro de "${CARPETA_RAIZ}".`);
-    throw new Error(`No se pudo descargar "${ruta}" (HTTP ${res.status}).`);
-  }
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(ruta)}:/content`);
+  if (!res.ok) throw new Error(`descarga "${ruta}" → ${res.status}`);
   return new TextDecoder("utf-8").decode(await res.arrayBuffer()).replace(/^\uFEFF/, "");
 }
-async function subirTexto(ruta, texto) {
-  const path = encodeGraphPath(ruta);
-  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}:/content`, {
-    method: "PUT",
-    headers: { "Content-Type": "text/csv;charset=utf-8" },
-    body: `\uFEFF${texto}`
+
+// Sube (crea o reemplaza) un fichero pequeño por ruta relativa a la carpeta raíz
+async function subirContenido(ruta, body, contentType) {
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(ruta)}:/content`, {
+    method: "PUT", headers: { "Content-Type": contentType }, body
   });
-  if (!res.ok) throw new Error(`No se pudo guardar "${ruta}" (HTTP ${res.status}: ${await res.text()}).`);
-  return res.json();
-}
-async function resolverFoto(rutaOriginal) {
-  const ruta = normalizarRutaFoto(rutaOriginal);
-  if (!ruta) return null;
-  if (esUrl(ruta)) return { miniatura: ruta, completa: ruta };
-  if (G.fotoCache.has(ruta)) return G.fotoCache.get(ruta);
-
-  const promesa = (async () => {
-    const intentos = ruta.includes("/") ? [ruta] : [ruta, `fotos/${ruta}`];
-    for (const intento of intentos) {
-      const path = encodeGraphPath(intento);
-      const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}?$expand=thumbnails`);
-      if (!res.ok) continue;
-      const item = await res.json();
-      const th = item.thumbnails && item.thumbnails[0];
-      const mini = th && (th.medium || th.large || th.small);
-      const completa = item["@microsoft.graph.downloadUrl"] || (mini && mini.url) || "";
-      if (mini || completa) return { miniatura: (mini && mini.url) || completa, completa };
-    }
-    return null;
-  })();
-  G.fotoCache.set(ruta, promesa);
-  return promesa;
+  if (!res.ok) throw new Error(`subida "${ruta}" → ${res.status} ${await res.text()}`);
+  return await res.json();
 }
 
-// ---------- Datos ----------
-async function cargarDatos() {
-  const cargaId = ++G.cargaId;
-  setEstado(`Cargando "${FILE_DATOS}"…`);
-  const texto = await descargarTexto(FILE_DATOS);
-  if (cargaId !== G.cargaId) return;
-  const filas = parseCSV(texto);
-  if (!filas.length) {
-    G.registros = [];
-  } else {
-    const tieneCabecera = pareceCabecera(filas[0]);
-    const cabecera = tieneCabecera ? filas[0] : COLUMNAS.map(c => c.label);
-    const mapa = crearMapaCabecera(cabecera);
-    const datos = tieneCabecera ? filas.slice(1) : filas;
-    G.registros = datos.map((fila, indice) => registroDesdeFila(fila, mapa, indice));
+// Sube un fichero grande (>3,5 MB) por sesión de subida, en trozos de 5 MiB (múltiplo de 320 KiB)
+async function subirGrande(ruta, blob, contentType) {
+  const rs = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(ruta)}:/createUploadSession`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item: { "@microsoft.graph.conflictBehavior": "replace" } })
+  });
+  if (!rs.ok) throw new Error(`sesión "${ruta}" → ${rs.status}`);
+  const { uploadUrl } = await rs.json();
+  const CHUNK = 5 * 1024 * 1024, total = blob.size;
+  let pos = 0, ultimo = null;
+  while (pos < total) {
+    const fin = Math.min(pos + CHUNK, total);
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Range": `bytes ${pos}-${fin - 1}/${total}`, "Content-Type": contentType },
+      body: blob.slice(pos, fin)
+    });
+    if (!res.ok && res.status !== 202) throw new Error(`trozo ${pos} → ${res.status}`);
+    ultimo = res; pos = fin;
   }
-  G.fotoCache.clear();
-  poblarFiltros();
-  render();
-  setEstado(`${G.registros.length} tupper(s) cargado(s).`);
+  return await ultimo.json();
 }
-async function guardarDatos() {
-  if (guardando) throw new Error("Ya hay un guardado en curso.");
+
+async function subirFoto(ruta, blob) {
+  const tipo = blob.type || "image/jpeg";
+  return blob.size <= 3.5 * 1024 * 1024 ? subirContenido(ruta, blob, tipo) : subirGrande(ruta, blob, tipo);
+}
+
+// Crea la subcarpeta de la ejecución (si ya existe, la reutiliza)
+async function crearSubcarpeta(nombre) {
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}/children`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: nombre, folder: {}, "@microsoft.graph.conflictBehavior": "fail" })
+  });
+  if (res.ok) return await res.json();
+  if (res.status === 409) { // ya existía (dos ejecuciones en el mismo minuto): la reutilizamos
+    const r2 = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(nombre)}`);
+    if (r2.ok) return await r2.json();
+  }
+  throw new Error(`crear carpeta "${nombre}" → ${res.status} ${await res.text()}`);
+}
+
+// Lista las subcarpetas de ejecución (YYMMDDHHMM), más recientes primero
+async function listarEjecuciones() {
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}/children?$top=200&$orderby=name%20desc`);
+  if (!res.ok) throw new Error("listar ejecuciones → " + res.status);
+  return ((await res.json()).value || [])
+    .filter(it => it.folder && RE_EJECUCION.test(it.name))
+    .map(it => it.name)
+    .sort((a, b) => b.localeCompare(a));
+}
+
+// Lista las fotos (imágenes) de la carpeta de la ejecución, con miniaturas
+async function listarFotos(nombre) {
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(nombre)}:/children?$expand=thumbnails&$top=200`);
+  if (!res.ok) throw new Error("listar fotos → " + res.status);
+  return ((await res.json()).value || [])
+    .filter(it => it.file && (/^image\//.test(it.file.mimeType || "") || /\.(jpe?g|png|heic|webp)$/i.test(it.name)))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ---------- Sincronización multi-dispositivo ----------
+// Cada dispositivo mantiene sus filas en memoria; sin fusión, el autosave de uno
+// machacaría lo validado en el otro (last-write-wins sobre el CSV completo).
+// Estrategia: e.dirty = Set de índices modificados localmente y aún no subidos.
+// Al fusionar con el CSV remoto, lo local "sucio" gana; el resto adopta lo remoto.
+
+async function descargarEstadoRemoto() {
+  const e = G.ejecucion;
+  const text = await descargarTexto(`${e.nombre}/${e.stateName}`);
+  return parseCSV(text).map(r => {
+    while (r.length < 8) r.push("");
+    return r.slice(0, 8).map(f => (f || "").trim());
+  });
+}
+
+// Copia ESTADO/FOTO/HORA/USUARIO/MARCA remotos en las filas no modificadas localmente. Devuelve nº de cambios.
+function fusionar(remoto) {
+  const e = G.ejecucion;
+  let cambios = 0;
+  const n = Math.min(e.rows.length, remoto.length);
+  for (let i = 0; i < n; i++) {
+    if (e.dirty.has(i)) continue;                 // lo modificado aquí tiene prioridad
+    const l = e.rows[i], r = remoto[i];
+    let dif = false;
+    for (let c = 3; c < 8; c++) if (l[c] !== r[c]) { dif = true; break; }
+    if (dif) { for (let c = 3; c < 8; c++) l[c] = r[c]; cambios++; }
+  }
+  return cambios;
+}
+
+// Polling / resync manual: baja el CSV remoto y refleja cambios del otro dispositivo.
+async function sincronizar() {
+  const e = G.ejecucion;
+  if (!e || guardando || document.hidden) return;
+  try {
+    const remoto = await descargarEstadoRemoto();
+    if (fusionar(remoto)) {
+      renderArbol();
+      setEstado("Lista actualizada con cambios de otro dispositivo.");
+    }
+  } catch (err) { console.warn("Sync:", err.message); }
+}
+function iniciarSync() {
+  detenerSync();
+  syncTimer = setInterval(sincronizar, SYNC_MS);
+  // refresco periódico del "hace x min" de las tareas hechas
+  minTimer = setInterval(() => { if (G.ejecucion && !document.hidden) renderArbol(); }, 60000);
+}
+function detenerSync() {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  if (minTimer) { clearInterval(minTimer); minTimer = null; }
+}
+
+// ---------- Guardado del estado de la ejecución (autosave con reintento en cola) ----------
+async function guardarEstado() {
+  const e = G.ejecucion;
+  const modAlEmpezar = e.mod;
+  // Fusiona lo remoto antes de subir para no pisar validaciones de otro dispositivo.
+  try {
+    const remoto = await descargarEstadoRemoto();
+    if (fusionar(remoto)) renderArbol();
+  } catch (err) { /* p. ej. 404 en el primer guardado de una lista recién creada */ }
+  await subirContenido(`${e.nombre}/${e.stateName}`, serializeCSV(e.rows), "text/csv");
+  // Solo limpiamos "dirty" si no hubo modificaciones durante la subida (si las hubo,
+  // hay otro guardado en cola que las volverá a fusionar y subir).
+  if (e.mod === modAlEmpezar) e.dirty.clear();
+}
+function programarGuardado() {
+  if (guardando) { guardarDeNuevo = true; return; }
   guardando = true;
-  const boton = $("btnGuardarEditor");
-  if (boton) boton.disabled = true;
+  guardarEstado()
+    .then(() => setEstado(`Cambios guardados en ${G.ejecucion.nombre}.`))
+    .catch(e => setEstado("Error guardando (los cambios siguen en pantalla, reintenta): " + e.message, true))
+    .finally(() => { guardando = false; if (guardarDeNuevo) { guardarDeNuevo = false; programarGuardado(); } });
+}
+
+// ---------- Plantilla ----------
+async function cargarPlantilla() {
+  const text = await descargarTexto(FILE_PLANTILLA);
+  // 3 columnas: PISO;ZONA;ACCION (se ignoran ";" finales / columnas extra)
+  G.plantilla = parseCSV(text).map(r => [(r[0] || "").trim(), (r[1] || "").trim(), (r[2] || "").trim()])
+    .filter(r => r[2] !== "");
+  if (!G.plantilla.length) throw new Error(`"${FILE_PLANTILLA}" está vacío o no tiene 3 columnas.`);
+}
+
+// ---------- Flujos ----------
+// Límite: una lista por día natural. Si ya existe, el botón pasa a "Abrir lista en marcha".
+async function actualizarMenu() {
+  const btn = document.getElementById("btnNueva");
+  btn.disabled = true;
   try {
-    setEstado("Guardando cambios en OneDrive…");
-    await subirTexto(FILE_DATOS, serializeCSV(filasParaGuardar()));
-    setEstado("Cambios guardados en OneDrive.");
-  } finally {
-    guardando = false;
-    if (boton) boton.disabled = false;
-  }
+    const nombres = await listarEjecuciones();
+    G.listaHoy = nombres.find(n => n.startsWith(hoyPrefijo())) || null;
+  } catch (e) { console.warn("No pude comprobar la lista de hoy:", e); G.listaHoy = null; }
+  btn.textContent = G.listaHoy
+    ? `▶ Abrir lista en marcha (creada a las ${G.listaHoy.slice(6, 8)}:${G.listaHoy.slice(8, 10)})`
+    : "▶ Realizar una lista completa";
+  btn.disabled = false;
+}
+function volverAlMenu() {
+  G.ejecucion = null; cerrarCarrete(); detenerSync();
+  mostrarVista("menu");
+  setEstado("Elige una opción.");
+  actualizarMenu();
+}
+function onNueva() {
+  if (G.listaHoy) abrirEjecucion(G.listaHoy);
+  else nuevaEjecucion();
+}
+function resetUiArbol() {
+  UI.verHechas = true;
+  UI.editables.clear();
+  cerrarCarrete();
+}
+async function nuevaEjecucion() {
+  try {
+    setEstado("Creando nueva lista…");
+    // Doble comprobación del límite diario (por si el menú estaba desactualizado)
+    const previas = await listarEjecuciones();
+    const deHoy = previas.find(n => n.startsWith(hoyPrefijo()));
+    if (deHoy) { G.listaHoy = deHoy; return abrirEjecucion(deHoy); }
+    await cargarPlantilla();                       // siempre la plantilla actual
+    const nombre = nombreEjecucion();
+    const sub = await crearSubcarpeta(nombre);
+    // Estado: PISO;ZONA;ACCION;ESTADO;FOTO;HORA;USUARIO;MARCA — congela la estructura con la que se ejecuta
+    const rows = G.plantilla.map(t => [t[0], t[1], t[2], "", "", "", "", ""]);
+    G.ejecucion = { nombre, subfolderId: sub.id, stateName: `${nombre}.csv`, rows, dirty: new Set(), mod: 0 };
+    G.listaHoy = nombre;
+    await guardarEstado();
+    setEstado(`Lista ${nombreLegible(nombre)} creada.`);
+    resetUiArbol();
+    renderArbol();
+    mostrarVista("arbol");
+    iniciarSync();
+  } catch (e) { setEstado("Error: " + e.message, true); }
 }
 
-// ---------- Filtros y orden ----------
-const FILTROS = {
-  nombreTupper: "fNombre",
-  comentariosTupper: "fComentarios",
-  materialTapa: "fMaterialTapa",
-  materialTupper: "fMaterialTupper",
-  fechaCompraTupper: "fFechaCompra",
-  fotoTupper: "fFoto",
-  ocupado: "fOcupado",
-  enQueCasaEsta: "fCasa",
-  ubicacion: "fUbicacion",
-  comida: "fComida",
-  urlCookido: "fUrlCookido",
-  gluten: "fGluten",
-  leche: "fLeche",
-  fechaPreparacion: "fFechaPreparacion"
-};
-function leerFiltros() {
-  return Object.fromEntries(Object.entries(FILTROS).map(([key, id]) => [key, $(id).value]));
-}
-function coincideTexto(valor, filtro) { return !norm(filtro) || norm(valor).includes(norm(filtro)); }
-function coincideFecha(valor, filtro) { return !filtro || fechaParaInput(valor) === filtro; }
-function coincideExacto(valor, filtro) { return !filtro || norm(valor) === filtro; }
-function coincideSiNo(valor, filtro) {
-  if (!filtro) return true;
-  if (!norm(valor)) return false;
-  return (esSi(valor) ? "si" : "no") === filtro;
-}
-// Botones rápidos de casa (Castefa / Comarruga): pueden estar activos ambos, uno o ninguno.
-const casasBoton = new Set();
-function coincideCasaBotones(registro) {
-  return !casasBoton.size || casasBoton.has(norm(registro.enQueCasaEsta));
-}
-function registroCoincide(registro, filtros) {
-  return coincideTexto(registro.nombreTupper, filtros.nombreTupper)
-    && coincideTexto(registro.comentariosTupper, filtros.comentariosTupper)
-    && coincideTexto(registro.materialTapa, filtros.materialTapa)
-    && coincideTexto(registro.materialTupper, filtros.materialTupper)
-    && coincideFecha(registro.fechaCompraTupper, filtros.fechaCompraTupper)
-    && coincideTexto(registro.fotoTupper, filtros.fotoTupper)
-    && coincideSiNo(registro.ocupado, filtros.ocupado)
-    && coincideExacto(registro.enQueCasaEsta, filtros.enQueCasaEsta)
-    && coincideCasaBotones(registro)
-    && coincideExacto(registro.ubicacion, filtros.ubicacion)
-    && coincideTexto(registro.comida, filtros.comida)
-    && coincideTexto(registro.urlCookido, filtros.urlCookido)
-    && coincideExacto(registro.gluten, filtros.gluten)
-    && coincideExacto(registro.leche, filtros.leche)
-    && coincideFecha(registro.fechaPreparacion, filtros.fechaPreparacion);
-}
-function compararCasaYUbicacion(a, b) {
-  const ca = norm(a.enQueCasaEsta), cb = norm(b.enQueCasaEsta);
-  const ra = ORDEN_CASAS.has(ca) ? ORDEN_CASAS.get(ca) : 100;
-  const rb = ORDEN_CASAS.has(cb) ? ORDEN_CASAS.get(cb) : 100;
-  if (ra !== rb) return ra - rb;
-  const porCasa = collator.compare(a.enQueCasaEsta || "", b.enQueCasaEsta || "");
-  if (porCasa) return porCasa;
-  const ua = ORDEN_UBICACIONES.has(norm(a.ubicacion)) ? ORDEN_UBICACIONES.get(norm(a.ubicacion)) : 50;
-  const ub = ORDEN_UBICACIONES.has(norm(b.ubicacion)) ? ORDEN_UBICACIONES.get(norm(b.ubicacion)) : 50;
-  if (ua !== ub) return ua - ub;
-  const porUbicacion = collator.compare(a.ubicacion || "", b.ubicacion || "");
-  if (porUbicacion) return porUbicacion;
-  return collator.compare(a.nombreTupper || "", b.nombreTupper || "");
-}
-function limpiarFiltros() {
-  Object.values(FILTROS).forEach(id => { $(id).value = ""; });
-  casasBoton.clear();
-  actualizarBotonesCasa();
-  render();
-}
-
-// ---------- Combos dinámicos ----------
-function opcionesUnicas(key, base = []) {
-  const vistos = new Map();
-  base.forEach(v => vistos.set(norm(v), v));
-  G.registros.forEach(r => {
-    const v = String(r[key] || "").trim();
-    if (v && !vistos.has(norm(v))) vistos.set(norm(v), v);
-  });
-  return [...vistos.entries()]; // [valorNormalizado, etiqueta]
-}
-function rellenarSelect(id, entradas, textoTodos) {
-  const sel = $(id);
-  if (!sel) return;
-  const actual = sel.value;
-  sel.innerHTML = `<option value="">${textoTodos}</option>`
-    + entradas.map(([v, etiqueta]) => `<option value="${escapeHtml(v)}">${escapeHtml(etiqueta)}</option>`).join("");
-  if ([...sel.options].some(o => o.value === actual)) sel.value = actual;
-}
-function poblarFiltros() {
-  const casas = opcionesUnicas("enQueCasaEsta").sort((a, b) => {
-    const ra = ORDEN_CASAS.has(a[0]) ? ORDEN_CASAS.get(a[0]) : 100;
-    const rb = ORDEN_CASAS.has(b[0]) ? ORDEN_CASAS.get(b[0]) : 100;
-    return (ra - rb) || collator.compare(a[1], b[1]);
-  });
-  rellenarSelect("fCasa", casas, "Todas");
-  rellenarSelect("fUbicacion", opcionesUnicas("ubicacion", ["Congelador", "Frigo", "Fuera"]), "Todas");
-  rellenarSelect("fGluten", opcionesUnicas("gluten", OPCIONES_GLUTEN_LECHE), "Todos");
-  rellenarSelect("fLeche", opcionesUnicas("leche", OPCIONES_GLUTEN_LECHE), "Todos");
-}
-
-// ---------- Render ----------
-function datoHtml(label, valor, fecha = false) {
-  const texto = fecha ? fechaVisible(valor) : valorVisible(valor);
-  return `<div class="dato"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(texto)}</dd></div>`;
-}
-function claseCasa(casa) {
-  const c = norm(casa);
-  if (c === "castefa") return "casa-castefa";
-  if (c === "comarruga") return "casa-comarruga";
-  if (c === "3" || c === "4") return "casa-naranja";
-  return "";
-}
-function tarjetaHtml(registro, indice) {
-  const ocupado = esSi(registro.ocupado);
-  const clase = `${ocupado ? "ocupado" : "libre"} ${claseCasa(registro.enQueCasaEsta)}`;
-  const comida = ocupado ? valorVisible(registro.comida, "Contenido sin indicar") : "Tupper libre";
-  const foto = normalizarRutaFoto(registro.fotoTupper);
-  const marcoFoto = foto
-    ? `<div class="foto-marco" data-foto-marco="${indice}"><span class="cargando-foto">Cargando foto…</span></div>`
-    : `<div class="foto-marco"><span class="sin-foto">Sin foto</span></div>`;
-
-  return `
-    <article class="tupper ${clase}" data-indice="${indice}">
-      ${marcoFoto}
-      <div class="vista-previa-tupper">
-        <p class="comida-principal ${ocupado ? "" : "vacio"}">${escapeHtml(comida)}</p>
-        <h3>${escapeHtml(valorVisible(registro.nombreTupper, "Tupper sin nombre"))}</h3>
-        <div class="badges">
-          <span class="badge">En q casa está: ${escapeHtml(valorVisible(registro.enQueCasaEsta))}</span>
-          <span class="badge estado">Ubicación: ${escapeHtml(ocupado ? valorVisible(registro.ubicacion) : "Libre")}</span>
-        </div>
-        <button class="editar" type="button" data-editar="${indice}">Ver / editar tupper</button>
-      </div>
-    </article>`;
-}
-function actualizarResumen(visibles) {
-  const ocupados = G.registros.filter(r => esSi(r.ocupado)).length;
-  $("totalTuppers").textContent = String(G.registros.length);
-  $("totalOcupados").textContent = String(ocupados);
-  $("totalLibres").textContent = String(G.registros.length - ocupados);
-  $("totalVisibles").textContent = String(visibles);
-}
-function render() {
-  const filtros = leerFiltros();
-  const visibles = G.registros
-    .map((registro, indice) => ({ registro, indice }))
-    .filter(({ registro }) => registroCoincide(registro, filtros))
-    .sort((a, b) => compararCasaYUbicacion(a.registro, b.registro));
-
-  actualizarResumen(visibles.length);
-  const lista = $("listaTuppers");
-  if (!visibles.length) {
-    lista.innerHTML = `<div class="vacio-lista">No hay tuppers que coincidan con los filtros.</div>`;
-    return;
-  }
-  lista.innerHTML = visibles.map(({ registro, indice }) => tarjetaHtml(registro, indice)).join("");
-  cargarFotosRenderizadas(visibles);
-}
-async function cargarFotosRenderizadas(visibles) {
-  for (const { registro, indice } of visibles) {
-    const marco = document.querySelector(`[data-foto-marco="${indice}"]`);
-    if (!marco || !registro.fotoTupper) continue;
-    try {
-      const foto = await resolverFoto(registro.fotoTupper);
-      if (!marco.isConnected) continue;
-      if (!foto || !foto.miniatura) {
-        marco.innerHTML = `<span class="sin-foto">Foto no encontrada</span>`;
-        continue;
-      }
-      marco.innerHTML = `<img src="${escapeHtml(foto.miniatura)}" alt="Foto de ${escapeHtml(registro.nombreTupper)}" loading="lazy" />`
-        + (foto.completa ? `<button type="button" data-abrir-foto="${indice}" aria-label="Abrir foto"></button>` : "");
-      marco.dataset.urlCompleta = foto.completa || foto.miniatura;
-    } catch (error) {
-      if (marco.isConnected) marco.innerHTML = `<span class="sin-foto">No se pudo cargar</span>`;
-      console.warn("No se pudo cargar la foto", registro.fotoTupper, error);
+async function verEjecuciones() {
+  try {
+    setEstado("Buscando listas existentes…");
+    const nombres = await listarEjecuciones();
+    const ul = document.getElementById("listaEjecuciones");
+    ul.innerHTML = "";
+    if (!nombres.length) {
+      ul.innerHTML = `<li class="vacio">No hay ninguna lista todavía.</li>`;
+    } else {
+      nombres.forEach(n => {
+        const li = document.createElement("li");
+        li.innerHTML = `<button type="button" data-nombre="${n}">
+                          <span class="nombre">${fechaLarga(n)}</span><span class="fecha">(${haceDias(n)})</span>
+                        </button>`;
+        ul.appendChild(li);
+      });
     }
-  }
+    setEstado(`${nombres.length} lista(s) encontrada(s).`);
+    mostrarVista("ejecuciones");
+  } catch (e) { setEstado("Error: " + e.message, true); }
 }
 
-// ---------- Editor ----------
-function normalizarUsoHistorico(uso) {
-  const formatoNuevo = Object.prototype.hasOwnProperty.call(uso || {}, "enQueCasaEsta");
-  return {
-    guardadoEn: uso && uso.guardadoEn ? uso.guardadoEn : "",
-    ocupado: uso && uso.ocupado ? uso.ocupado : "No",
-    enQueCasaEsta: formatoNuevo ? (uso.enQueCasaEsta || "") : ((uso && uso.ubicacion) || ""),
-    ubicacion: formatoNuevo ? (uso.ubicacion || "") : ((uso && uso.estado) || ""),
-    comida: (uso && uso.comida) || "",
-    urlCookido: (uso && uso.urlCookido) || "",
-    gluten: (uso && uso.gluten) || "",
-    leche: (uso && uso.leche) || "",
-    fechaPreparacion: (uso && uso.fechaPreparacion) || ""
-  };
-}
-function fechaHoraVisible(valor) {
-  if (!valor) return "Fecha no registrada";
-  const fecha = new Date(valor);
-  if (Number.isNaN(fecha.getTime())) return valorVisible(valor);
-  return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(fecha);
-}
-function enlaceHistorial(url) {
-  const texto = String(url || "").trim();
-  if (!texto) return "—";
-  if (!/^https?:\/\//i.test(texto)) return escapeHtml(texto);
-  return `<a href="${escapeHtml(texto)}" target="_blank" rel="noopener">Abrir enlace</a>`;
-}
-function historialHtml(registro) {
-  const historial = parsearHistorial(registro.historial).map(normalizarUsoHistorico);
-  if (!historial.length) return `<p class="historial-vacio">Todavía no hay usos anteriores guardados.</p>`;
-  return historial.map((uso, indice) => `
-    <article class="uso-anterior">
-      <div class="uso-anterior-cabecera">
-        <strong>Uso anterior ${indice + 1}</strong>
-        <span>${escapeHtml(fechaHoraVisible(uso.guardadoEn))}</span>
-      </div>
-      <dl class="datos-historial">
-        ${datoHtml("Ocupado", canonSiNo(uso.ocupado, false))}
-        ${datoHtml("En q casa está", uso.enQueCasaEsta)}
-        ${datoHtml("Ubicación", uso.ubicacion)}
-        ${datoHtml("Comida", uso.comida)}
-        <div class="dato"><dt>Url cookido</dt><dd>${enlaceHistorial(uso.urlCookido)}</dd></div>
-        ${datoHtml("Gluten", uso.gluten)}
-        ${datoHtml("Leche", uso.leche)}
-        ${datoHtml("Fecha preparación", uso.fechaPreparacion, true)}
-      </dl>
-    </article>`).join("");
-}
-function prepararHistorial(registro) {
-  $("historialUsos").innerHTML = historialHtml(registro);
-  $("panelHistorial").hidden = true;
-  $("btnHistorial").setAttribute("aria-expanded", "false");
-  $("btnHistorial").textContent = "Mostrar los 3 usos anteriores";
-}
-function alternarHistorial() {
-  const panel = $("panelHistorial");
-  const mostrar = panel.hidden;
-  panel.hidden = !mostrar;
-  $("btnHistorial").setAttribute("aria-expanded", mostrar ? "true" : "false");
-  $("btnHistorial").textContent = mostrar ? "Ocultar usos anteriores" : "Mostrar los 3 usos anteriores";
-}
-function crearInstantanea(registro) {
-  return {
-    guardadoEn: new Date().toISOString(),
-    ocupado: registro.ocupado || "No",
-    enQueCasaEsta: registro.enQueCasaEsta || "",
-    ubicacion: registro.ubicacion || "",
-    comida: registro.comida || "",
-    urlCookido: registro.urlCookido || "",
-    gluten: registro.gluten || "",
-    leche: registro.leche || "",
-    fechaPreparacion: registro.fechaPreparacion || ""
-  };
-}
-function abrirEditor(indice) {
-  const registro = G.registros[indice];
-  if (!registro) return;
-  $("editorIndice").value = String(indice);
-  $("tituloEditor").textContent = valorVisible(registro.nombreTupper, "Tupper");
-  $("datosFijos").innerHTML = CAMPOS_FIJOS.map(col => datoHtml(col.label, registro[col.key], col.key === "fechaCompraTupper")).join("");
-
-  $("eOcupado").value = esSi(registro.ocupado) ? "si" : "no";
-  const casa = String(registro.enQueCasaEsta || "").trim();
-  const predefinida = CASAS_PREDEFINIDAS.find(v => norm(v) === norm(casa));
-  $("eCasaTipo").value = predefinida || "otra";
-  $("eCasaLibre").value = predefinida ? "" : casa;
-  $("eUbicacion").value = ["Congelador", "Frigo", "Fuera"].find(v => norm(v) === norm(registro.ubicacion)) || "";
-  $("eComida").value = registro.comida || "";
-  $("eUrlCookido").value = registro.urlCookido || "";
-  $("eGluten").value = OPCIONES_GLUTEN_LECHE.find(v => norm(v) === norm(registro.gluten)) || "";
-  $("eLeche").value = OPCIONES_GLUTEN_LECHE.find(v => norm(v) === norm(registro.leche)) || "";
-  $("eFechaPreparacion").value = fechaParaInput(registro.fechaPreparacion);
-  prepararHistorial(registro);
-  actualizarEditor();
-
-  const dialogo = $("editor");
-  if (typeof dialogo.showModal === "function") dialogo.showModal();
-  else dialogo.setAttribute("open", "");
-}
-function cerrarEditor() {
-  const dialogo = $("editor");
-  if (typeof dialogo.close === "function") dialogo.close();
-  else dialogo.removeAttribute("open");
-}
-function actualizarEditor() {
-  const ocupado = $("eOcupado").value === "si";
-  const otraCasa = $("eCasaTipo").value === "otra";
-  $("campoCasaLibre").hidden = !otraCasa;
-  $("eCasaLibre").required = otraCasa;
-  $("contenidoEditor").disabled = !ocupado;
-  $("eUbicacion").required = ocupado;
-  $("eComida").required = ocupado;
-  $("eGluten").required = ocupado;
-  $("eLeche").required = ocupado;
-  $("eFechaPreparacion").required = ocupado;
-  // Url cookido es siempre opcional.
-  $("eUrlCookido").required = false;
-  if (ocupado && !$("eFechaPreparacion").value) $("eFechaPreparacion").value = hoyIso();
-}
-async function guardarEditor(evento) {
-  evento.preventDefault();
-  const form = $("formEditor");
-  if (!form.reportValidity()) return;
-  const indice = Number($("editorIndice").value);
-  const registro = G.registros[indice];
-  if (!registro) return;
-
-  const copiaAnterior = Object.assign({}, registro);
-  const ocupado = $("eOcupado").value === "si";
-  const casa = $("eCasaTipo").value === "otra"
-    ? $("eCasaLibre").value.trim()
-    : $("eCasaTipo").value;
-  const nuevo = {
-    ocupado: ocupado ? "Sí" : "No",
-    enQueCasaEsta: casa,
-    ubicacion: ocupado ? $("eUbicacion").value : "",
-    comida: ocupado ? $("eComida").value.trim() : "",
-    urlCookido: ocupado ? $("eUrlCookido").value.trim() : "",
-    gluten: ocupado ? $("eGluten").value : "",
-    leche: ocupado ? $("eLeche").value : "",
-    fechaPreparacion: ocupado ? $("eFechaPreparacion").value : ""
-  };
-
-  const hayCambios = CAMPOS_HISTORIAL.some(key => String(registro[key] || "").trim() !== String(nuevo[key] || "").trim());
-  if (!hayCambios) {
-    setEstado("No había cambios que guardar.");
-    cerrarEditor();
-    return;
-  }
-
-  const historial = parsearHistorial(registro.historial);
-  registro.historial = serializarHistorial([crearInstantanea(registro), ...historial].slice(0, 3));
-  Object.assign(registro, nuevo);
-
-  poblarFiltros();
-  render();
+async function abrirEjecucion(nombre) {
   try {
-    await guardarDatos();
-    cerrarEditor();
-  } catch (error) {
-    Object.assign(registro, copiaAnterior);
-    render();
-    setEstado(`Error guardando: ${error.message}`, true);
-  }
+    setEstado(`Abriendo ${nombreLegible(nombre)}…`);
+    const text = await descargarTexto(`${nombre}/${nombre}.csv`);
+    const rows = parseCSV(text).map(r => {
+      while (r.length < 8) r.push("");
+      return r.slice(0, 8).map(f => (f || "").trim());
+    });
+    G.ejecucion = { nombre, subfolderId: null, stateName: `${nombre}.csv`, rows, dirty: new Set(), mod: 0 };
+    setEstado(`Lista ${nombreLegible(nombre)} cargada (${rows.length} tareas).`);
+    resetUiArbol();
+    renderArbol();
+    mostrarVista("arbol");
+    iniciarSync();
+  } catch (e) { setEstado("Error abriendo la lista: " + e.message, true); }
 }
 
-// ---------- Autenticación e inicio ----------
+// ---------- Render del árbol piso → zona → acción ----------
+function renderArbol() {
+  const e = G.ejecucion;
+  document.getElementById("tituloEjecucion").textContent = `Lista ${nombreLegible(e.nombre)}  (${e.nombre})`;
+  document.getElementById("btnVerHechas").textContent = `Ver realizadas: ${UI.verHechas ? "SÍ" : "NO"}`;
+  const cont = document.getElementById("tareas");
+  cont.innerHTML = "";
+  let pisoAct = null, zonaAct = null;
+  let pendPiso = false, pendZona = false;   // cabeceras pendientes de pintar (solo si hay tarea visible)
+  e.rows.forEach((row, idx) => {
+    const [piso, zona, accion, estado, foto] = row;
+    if (piso !== pisoAct) { pisoAct = piso; zonaAct = null; pendPiso = true; }
+    if (zona !== zonaAct) { zonaAct = zona; pendZona = true; }
+    const hecha = norm(estado) === "ok";
+    if (hecha && !UI.verHechas) return;     // ocultar realizadas
+    if (pendPiso) {
+      const d = document.createElement("div"); d.className = "piso"; d.textContent = piso || "(sin piso)";
+      cont.appendChild(d); pendPiso = false;
+    }
+    if (pendZona) {
+      const d = document.createElement("div"); d.className = "zona"; d.textContent = zona || "(sin zona)";
+      cont.appendChild(d); pendZona = false;
+    }
+    const conFoto = esFoto(accion);
+    const editable = UI.editables.has(idx);
+    const d = document.createElement("div");
+    d.className = "tarea" + (hecha ? " hecha" : "");
+    let botones;
+    if (!hecha) {
+      // Pendiente: acción directa
+      botones = conFoto
+        ? `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 Foto</button>`
+        : `<button type="button" class="check pendiente" data-idx="${idx}" data-act="check">Pendiente</button>`;
+    } else if (!editable) {
+      // Hecha y bloqueada: solo "Editar"
+      botones = `<button type="button" class="edit" data-idx="${idx}" data-act="editar">✎ Editar</button>`;
+    } else {
+      // Hecha y desbloqueada: acción de edición + cancelar
+      botones = (conFoto
+        ? `<button type="button" class="foto" data-idx="${idx}" data-act="foto">📷 Repetir</button>`
+        : `<button type="button" class="check deshacer" data-idx="${idx}" data-act="check">↩ Quitar</button>`)
+        + `<button type="button" class="cancel" data-idx="${idx}" data-act="cancelar">✕</button>`;
+    }
+    const ver = hecha && foto ? ` <a class="ver" href="#" data-idx="${idx}" data-act="ver">ver foto</a>` : "";
+    let meta = "";
+    if (hecha) {
+      const partes = [];
+      if (row[6]) partes.push(escapeHtml(row[6]));
+      const t = haceTexto(row, e.nombre);
+      if (t) partes.push(t);
+      if (row[5]) partes.push(escapeHtml(row[5]));
+      if (partes.length) meta = `<span class="hora">${partes.join(" · ")}</span>`;
+    }
+    d.innerHTML = `<span class="texto">${escapeHtml(accion)}${ver}${meta}</span><span class="botones">${botones}</span>`;
+    cont.appendChild(d);
+  });
+  actualizarProgreso();
+}
+function actualizarProgreso() {
+  const rows = G.ejecucion.rows;
+  const ok = rows.filter(r => norm(r[3]) === "ok").length;
+  document.getElementById("progreso").textContent =
+    `${ok} de ${rows.length} tareas completadas · pendientes: ${rows.length - ok}` +
+    (ok === rows.length ? " · ✅ LISTA COMPLETA" : "");
+}
+
+// ---------- Acciones sobre tareas ----------
+function marcar(idx, estado, foto) {
+  const e = G.ejecucion;
+  const row = e.rows[idx];
+  const ok = estado === "OK";
+  row[3] = estado;
+  if (foto !== undefined) row[4] = foto;
+  row[5] = ok ? new Date().toTimeString().slice(0, 8) : "";
+  row[6] = ok ? nombreUsuario() : "";   // quién lo ha hecho (primera palabra del nombre)
+  row[7] = ok ? ahoraTS() : "";         // marca completa para calcular "hace x min"
+  e.dirty.add(idx);           // modificado localmente: gana en la fusión hasta subirse
+  e.mod++;
+  UI.editables.delete(idx);   // tras editar, la tarea vuelve a quedar bloqueada
+  renderArbol();
+  programarGuardado();
+}
+function onCheck(idx) {
+  const row = G.ejecucion.rows[idx];
+  const hecha = norm(row[3]) === "ok";
+  if (hecha && !UI.editables.has(idx)) return;   // hecha y bloqueada: no editable
+  if (!hecha && !confirm(`¿Confirmas que esta tarea está hecha?\n\n${row[2]}`)) return;
+  marcar(idx, hecha ? "" : "OK");                // toggle solo en modo edición
+}
+function pedirFoto(idx) {
+  const hecha = norm(G.ejecucion.rows[idx][3]) === "ok";
+  if (hecha && !UI.editables.has(idx)) return;   // hecha y bloqueada: no editable
+  fotoPendiente = idx;
+  const inp = document.getElementById("fotoInput");
+  inp.value = "";
+  inp.click();
+}
+// Reduce la foto a máx. 1600 px (JPEG 80%) para subir rápido; si falla, sube el original
+async function comprimirFoto(file) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const MAX = 1600, esc = Math.min(1, MAX / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(bmp.width * esc); cv.height = Math.round(bmp.height * esc);
+    cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(res => cv.toBlob(res, "image/jpeg", 0.8));
+    return blob || file;
+  } catch (e) { console.warn("Compresión falló, subo original:", e); return file; }
+}
+async function onFotoElegida(file) {
+  const idx = fotoPendiente; fotoPendiente = null;
+  if (idx == null || !file) return;
+  const e = G.ejecucion;
+  const fname = `${String(idx + 1).padStart(3, "0")}_${slug(e.rows[idx][2])}.jpg`;
+  try {
+    setEstado(`Subiendo foto ${fname}…`);
+    const blob = await comprimirFoto(file);
+    await subirFoto(`${e.nombre}/${fname}`, blob);
+    marcar(idx, "OK", fname);
+    setEstado(`Foto ${fname} subida.`);
+  } catch (err) { setEstado("Error subiendo la foto: " + err.message, true); }
+}
+async function verFoto(idx) {
+  const e = G.ejecucion;
+  const fname = e.rows[idx][4];
+  if (!fname) return;
+  try {
+    const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${encodeURI(e.nombre + "/" + fname)}`);
+    if (!res.ok) throw new Error(res.status);
+    const item = await res.json();
+    const url = (item["@microsoft.graph.downloadUrl"]) || item.webUrl;
+    if (url) window.open(url, "_blank");
+  } catch (err) { setEstado("No pude abrir la foto: " + err.message, true); }
+}
+
+// ---------- Carrete de fotos de la ejecución ----------
+async function abrirCarrete() {
+  const e = G.ejecucion;
+  if (!e) return;
+  try {
+    setEstado("Cargando carrete…");
+    const fotos = await listarFotos(e.nombre);
+    const grid = document.getElementById("carreteGrid");
+    grid.innerHTML = "";
+    if (!fotos.length) {
+      grid.innerHTML = `<p class="vacio">Todavía no hay fotos en esta lista.</p>`;
+    } else {
+      fotos.forEach(it => {
+        const th = it.thumbnails && it.thumbnails[0];
+        const mini = th && (th.large || th.medium || th.small);
+        const full = it["@microsoft.graph.downloadUrl"] || it.webUrl || "#";
+        const a = document.createElement("a");
+        a.className = "fotoRoll";
+        a.href = full; a.target = "_blank"; a.rel = "noopener";
+        a.innerHTML = (mini ? `<img src="${mini.url}" alt="${escapeHtml(it.name)}" loading="lazy" />`
+                            : `<span class="sinMini">🖼</span>`)
+                    + `<span class="pie">${escapeHtml(it.name)}</span>`;
+        grid.appendChild(a);
+      });
+    }
+    document.getElementById("carrete").hidden = false;
+    setEstado(`Carrete: ${fotos.length} foto(s).`);
+  } catch (err) { setEstado("Error cargando el carrete: " + err.message, true); }
+}
+function cerrarCarrete() {
+  const c = document.getElementById("carrete");
+  if (c) { c.hidden = true; document.getElementById("carreteGrid").innerHTML = ""; }
+}
+
+// ---------- Inicio tras login ----------
 async function iniciar() {
   if (inicializado) return;
   inicializado = true;
-  setEstado(`Buscando la carpeta "${CARPETA_RAIZ}"…`);
+  setEstado(`Buscando carpeta "${CARPETA_RAIZ}"…`);
   try {
     const token = await getToken(fileScopes);
-    if (!token) { inicializado = false; return; }
-    const encontrada = await localizarCarpeta(token);
-    if (!encontrada) {
-      throw new Error(`No existe la carpeta "${CARPETA_RAIZ}" en la raíz de OneDrive.`);
-    }
-    await cargarDatos();
-    mostrarVista("inventario");
-  } catch (error) {
-    setEstado(`Error: ${error.message}`, true);
+    if (!(await localizarCarpeta(token))) { inicializado = false; return; }
+    await actualizarMenu();
+    setEstado("Carpeta localizada. Elige una opción.");
+    mostrarVista("menu");
+  } catch (e) {
+    setEstado("Error: " + e.message, true);
     inicializado = false;
   }
 }
+
+// ---------- Autenticación (idéntica a la app hermana) ----------
 function updateAuthUI() {
   const account = msalInstance.getActiveAccount();
-  const loginBtn = $("loginBtn");
+  const loginBtn = document.getElementById("loginBtn");
   if (!loginBtn) return;
   if (account) {
-    loginBtn.textContent = `Cerrar sesión (${account.name || account.username})`;
+    loginBtn.textContent = "Cerrar sesión (" + (account.name || account.username) + ")";
     document.body.classList.add("logged-in");
-    loginBtn.onclick = async event => {
-      event.preventDefault();
-      loginBtn.disabled = true;
-      try {
-        await msalInstance.logoutPopup({ account });
-        msalInstance.setActiveAccount(null);
-      } catch (error) {
-        console.error(error);
-      } finally {
-        loginBtn.disabled = false;
-        inicializado = false;
-        G.registros = [];
-        G.fotoCache.clear();
-        $("listaTuppers").innerHTML = "";
+    loginBtn.onclick = async (e) => {
+      e.preventDefault(); loginBtn.disabled = true;
+      try { await msalInstance.logoutPopup({ account }); msalInstance.setActiveAccount(null); }
+      catch (err) { console.error(err); }
+      finally {
+        loginBtn.disabled = false; inicializado = false; G.ejecucion = null;
+        detenerSync();
+        document.getElementById("tareas").innerHTML = "";
+        document.getElementById("listaEjecuciones").innerHTML = "";
+        cerrarCarrete();
         mostrarVista("");
         setEstado("Inicia sesión para empezar.");
         updateAuthUI();
@@ -757,82 +629,55 @@ function updateAuthUI() {
   } else {
     loginBtn.textContent = "Iniciar sesión";
     document.body.classList.remove("logged-in");
-    loginBtn.onclick = async event => {
-      event.preventDefault();
-      loginBtn.disabled = true;
-      try { await msalInstance.loginRedirect(loginRequest); }
-      finally { loginBtn.disabled = false; }
-    };
+    loginBtn.onclick = async (e) => { e.preventDefault(); loginBtn.disabled = true; try { await handleLoginClick(); } finally { loginBtn.disabled = false; updateAuthUI(); } };
   }
 }
+async function handleLoginClick() { return msalInstance.loginRedirect(loginRequest); }
+async function getToken(request) {
+  const active = msalInstance.getActiveAccount();
+  const req = Object.assign({}, request, { account: request.account || active });
+  try { return (await msalInstance.acquireTokenSilent(req)).accessToken; }
+  catch (e) { console.warn("Silent falló, redirigiendo:", e && e.errorCode); msalInstance.acquireTokenRedirect(request); return; }
+}
 function resetMsal() {
-  Object.keys(localStorage)
-    .filter(k => k.startsWith("msal.") || k.includes(msalConfig.auth.clientId))
-    .forEach(k => localStorage.removeItem(k));
+  Object.keys(localStorage).filter(k => k.startsWith("msal.") || k.includes(msalConfig.auth.clientId)).forEach(k => localStorage.removeItem(k));
   if (location.hash) history.replaceState(null, "", location.pathname + location.search);
   console.log("Estado MSAL limpiado.");
 }
 
-// ---------- Eventos ----------
-Object.values(FILTROS).forEach(id => {
-  $(id).addEventListener("input", render);
-  $(id).addEventListener("change", render);
+// ---------- Arranque / eventos ----------
+document.getElementById("btnNueva").addEventListener("click", onNueva);
+document.getElementById("btnVer").addEventListener("click", verEjecuciones);
+document.getElementById("btnVolver1").addEventListener("click", volverAlMenu);
+document.getElementById("btnVolver2").addEventListener("click", volverAlMenu);
+document.getElementById("btnVerHechas").addEventListener("click", () => { UI.verHechas = !UI.verHechas; renderArbol(); });
+document.getElementById("btnCarrete").addEventListener("click", abrirCarrete);
+document.getElementById("btnCerrarCarrete").addEventListener("click", cerrarCarrete);
+document.getElementById("listaEjecuciones").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-nombre]");
+  if (b) abrirEjecucion(b.dataset.nombre);
 });
-$("btnLimpiar").addEventListener("click", limpiarFiltros);
-const BOTONES_CASA = [["btnCasaCastefa", "castefa"], ["btnCasaComarruga", "comarruga"]];
-function actualizarBotonesCasa() {
-  BOTONES_CASA.forEach(([id, casa]) => {
-    const btn = $(id);
-    if (btn) {
-      btn.classList.toggle("activo", casasBoton.has(casa));
-      btn.setAttribute("aria-pressed", casasBoton.has(casa) ? "true" : "false");
-    }
-  });
-}
-BOTONES_CASA.forEach(([id, casa]) => {
-  const btn = $(id);
-  if (!btn) return;
-  btn.addEventListener("click", () => {
-    if (casasBoton.has(casa)) casasBoton.delete(casa);
-    else casasBoton.add(casa);
-    actualizarBotonesCasa();
-    render();
-  });
+document.getElementById("tareas").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  e.preventDefault();
+  const idx = Number(el.dataset.idx);
+  if (el.dataset.act === "check") onCheck(idx);
+  else if (el.dataset.act === "foto") pedirFoto(idx);
+  else if (el.dataset.act === "ver") verFoto(idx);
+  else if (el.dataset.act === "editar") { UI.editables.add(idx); renderArbol(); }
+  else if (el.dataset.act === "cancelar") { UI.editables.delete(idx); renderArbol(); }
 });
-$("btnRecargar").addEventListener("click", () => cargarDatos().catch(error => setEstado(`Error: ${error.message}`, true)));
-$("listaTuppers").addEventListener("click", event => {
-  const editar = event.target.closest("[data-editar]");
-  if (editar) { abrirEditor(Number(editar.dataset.editar)); return; }
-  const abrirFoto = event.target.closest("[data-abrir-foto]");
-  if (abrirFoto) {
-    const marco = abrirFoto.closest(".foto-marco");
-    const url = marco && marco.dataset.urlCompleta;
-    if (url) window.open(url, "_blank", "noopener");
-  }
-});
-$("eOcupado").addEventListener("change", actualizarEditor);
-$("eCasaTipo").addEventListener("change", actualizarEditor);
-$("btnHistorial").addEventListener("click", alternarHistorial);
-$("btnCerrarEditor").addEventListener("click", cerrarEditor);
-$("btnCancelarEditor").addEventListener("click", cerrarEditor);
-$("formEditor").addEventListener("submit", guardarEditor);
-$("editor").addEventListener("click", event => {
-  if (event.target === $("editor")) cerrarEditor();
-});
+document.getElementById("fotoInput").addEventListener("change", (e) => onFotoElegida(e.target.files[0]));
+// Al volver la app/pestaña a primer plano, resincronizar de inmediato (multi-dispositivo)
+document.addEventListener("visibilitychange", () => { if (!document.hidden) sincronizar(); });
 
 (async () => {
   try {
-    const respuesta = await msalInstance.handleRedirectPromise();
-    if (respuesta && respuesta.account) msalInstance.setActiveAccount(respuesta.account);
-    else {
-      const cuentas = msalInstance.getAllAccounts();
-      if (cuentas.length === 1) msalInstance.setActiveAccount(cuentas[0]);
-    }
-  } catch (error) {
-    console.error(error);
-    setEstado(`Error de autenticación: ${error.message}`, true);
-  }
+    const rr = await msalInstance.handleRedirectPromise();
+    if (rr && rr.account) msalInstance.setActiveAccount(rr.account);
+    else { const a = msalInstance.getAllAccounts(); if (a.length === 1) msalInstance.setActiveAccount(a[0]); }
+  } catch (e) { console.error(e); }
   updateAuthUI();
 })();
-
-window.tuppersAuth = { msalInstance, getToken, resetMsal, G };
+window.pscmAuth = { msalInstance, getToken, resetMsal, G, UI };
