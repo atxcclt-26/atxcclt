@@ -8,6 +8,9 @@
 //       003_Foto_armario_izquierda.jpg  ← fotos de esa ejecución
 //
 // Si la ACCION empieza por "foto" → se valida haciendo una foto; si no → check.
+//
+// Rev. 2026-07-23: fix de autenticación en PWA (pantalla de inicio iOS):
+// redirectUri fija + navigateToLoginRequestUrl:false. Ver bloque MSAL.
 
 // ====== AJUSTES ======
 const CARPETA_RAIZ = "ZZZ_SG_pscm";   // carpeta en la raíz de OneDrive (case-insensitive)
@@ -18,9 +21,22 @@ const RE_EJECUCION = /^\d{10}$/;      // nombre de ejecución: YYMMDDHHMM
 // 1. MSAL (misma arquitectura que "Revisión de cargos")
 const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
                 (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-const REDIRECT_PAGE = window.location.origin + window.location.pathname;
+// Rev. 2026-07-23: redirectUri fija (antes dinámica con window.location).
+// En PWA de pantalla de inicio, iOS arranca en la start_url del manifest
+// (p.ej. .../index.html) y la URI dinámica dejaba de coincidir con la
+// registrada en Azure → fallo de autenticación (AADSTS50011).
+// ⚠️ Ajusta esta URL al path real publicado (GitHub Pages distingue mayúsculas)
+// y asegúrate de que está registrada como SPA en el app registration.
+const REDIRECT_PAGE = "https://atxcclt-26.github.io/atxcclt/pscm/";
 const msalConfig = {
-  auth: { clientId: "7765de16-766b-4051-b73d-d7167f5897dc", redirectUri: REDIRECT_PAGE },
+  auth: {
+    clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
+    redirectUri: REDIRECT_PAGE,
+    // Procesar la respuesta OAuth directamente en la redirectUri, sin
+    // re-navegar a la URL original: evita perder el #code al relanzarse
+    // la PWA en iOS standalone.
+    navigateToLoginRequestUrl: false
+  },
   cache: { cacheLocation: "localStorage", storeAuthStateInCookie: false },
   system: { loggerOptions: { logLevel: msal.LogLevel.Warning, loggerCallback: (l, m, p) => { if (!p) console.log(`[MSAL][${l}]`, m); } } }
 };
