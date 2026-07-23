@@ -27,7 +27,7 @@ const esMovil = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
 // registrada en Azure → fallo de autenticación (AADSTS50011).
 // ⚠️ Ajusta esta URL al path real publicado (GitHub Pages distingue mayúsculas)
 // y asegúrate de que está registrada como SPA en el app registration.
-const REDIRECT_PAGE = "https://atxcclt-26.github.io/atxcclt/pscm/";
+const REDIRECT_PAGE = "https://atxcclt-26.github.io/atxcclt/PSCMv1.0/";
 const msalConfig = {
   auth: {
     clientId: "7765de16-766b-4051-b73d-d7167f5897dc",
