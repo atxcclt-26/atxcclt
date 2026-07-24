@@ -3,12 +3,26 @@
 // Estructura esperada en OneDrive:
 //   ZZZ_SG_Despensa/
 //     despensa.csv
+//     fotos/                       ← opcional
+//       almendras.jpg
 //
 // Columnas de despensa.csv (separador ";"):
-// Nombre;Cantidad;Casa;Ubicación;Fecha caducidad;Corto plazo abierto;Categoría
+// Nombre;Cantidad;Casa;Ubicación;Fecha caducidad;Corto plazo abierto;
+// Categoría;Foto;Fecha último cambio;Historial
 //
-// Todos los campos son editables desde la web. La app permite crear y
-// eliminar artículos (a diferencia de Tuppers, donde el inventario es fijo).
+// Todos los campos son editables desde la web (Historial es interno). La app
+// permite crear y eliminar artículos.
+//
+// Rev. 4 (2026-07-24):
+// - Foto como en Tuppers: columna Foto (nombre de fichero, ruta relativa o
+//   URL), miniatura en tarjeta vía Graph con caché y fallback a "fotos/",
+//   clic para abrir la imagen completa.
+// - Nuevo campo Fecha último cambio: al abrir el editor se propone hoy;
+//   Cancelar conserva la fecha que hubiera.
+// - Historial de los últimos 5 estados (columna JSON interna, como en
+//   Tuppers pero con 5 en vez de 3): instantánea del estado anterior en
+//   cada guardado con cambios y en "No queda nada". Panel plegable en el
+//   editor para consultarlos.
 //
 // Rev. 3 (2026-07-24):
 // - Ficheros renombrados con sufijo "_despensa": index_despensa.html,
@@ -82,8 +96,14 @@ const COLUMNAS = [
   { key: "ubicacion", label: "Ubicación", aliases: ["ubicacion"] },
   { key: "fechaCaducidad", label: "Fecha caducidad", aliases: ["fecha caducidad", "caducidad", "fecha de caducidad"] },
   { key: "cortoPlazo", label: "Corto plazo abierto", aliases: ["corto plazo abierto", "corto plazo", "caduca abierto"] },
-  { key: "categoria", label: "Categoría", aliases: ["categoria"] }
+  { key: "categoria", label: "Categoría", aliases: ["categoria"] },
+  { key: "foto", label: "Foto", aliases: ["foto", "foto articulo", "imagen"] },
+  { key: "fechaUltimoCambio", label: "Fecha último cambio", aliases: ["fecha ultimo cambio", "ultimo cambio", "fecha cambio"] },
+  { key: "historial", label: "Historial", interno: true, aliases: ["historial"] }
 ];
+
+const MAX_HISTORIAL = 5;
+const CAMPOS_HISTORIAL = ["cantidad", "casa", "ubicacion", "fechaCaducidad", "cortoPlazo", "categoria", "fechaUltimoCambio"];
 
 const CASAS = ["Comarruga", "Castefa"];
 const UBICACIONES = ["Frigo", "Congelador", "Armario", "Arriba"];
@@ -96,6 +116,7 @@ const G = {
   driveId: null,
   folderId: null,
   registros: [],
+  fotoCache: new Map(),
   cargaId: 0
 };
 
@@ -160,11 +181,40 @@ function hoyIso() {
   const p = n => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+function normalizarRutaFoto(ruta) {
+  return String(ruta || "").trim().replace(/^\/+/, "");
+}
+function esUrl(ruta) { return /^(https?:|data:|blob:)/i.test(String(ruta || "").trim()); }
+
 // Cantidad: "" = plantilla oculta del catálogo; "0" = agotado ("No queda
 // nada", visible como recordatorio); cualquier otro texto = en stock.
 function cantidadDe(registro) { return String(registro.cantidad || "").trim(); }
 function tieneCantidad(registro) { return cantidadDe(registro) !== ""; }
 function esAgotado(registro) { return cantidadDe(registro) === "0"; }
+
+// Historial: JSON con los últimos MAX_HISTORIAL estados anteriores.
+function parsearHistorial(valor) {
+  if (!valor) return [];
+  try {
+    const lista = JSON.parse(valor);
+    return Array.isArray(lista) ? lista.filter(v => v && typeof v === "object").slice(0, MAX_HISTORIAL) : [];
+  } catch (error) {
+    console.warn("Historial no válido; se ignora.", error);
+    return [];
+  }
+}
+function serializarHistorial(lista) {
+  return JSON.stringify((Array.isArray(lista) ? lista : []).slice(0, MAX_HISTORIAL));
+}
+function crearInstantanea(registro) {
+  const uso = { guardadoEn: new Date().toISOString() };
+  CAMPOS_HISTORIAL.forEach(key => { uso[key] = registro[key] || ""; });
+  return uso;
+}
+// Añade al historial del registro una instantánea de su estado actual.
+function apilarHistorial(registro) {
+  registro.historial = serializarHistorial([crearInstantanea(registro), ...parsearHistorial(registro.historial)].slice(0, MAX_HISTORIAL));
+}
 
 // Días desde hoy hasta la caducidad. null si no hay fecha válida.
 // Negativo = caducado, 0 = caduca hoy.
@@ -228,6 +278,7 @@ function registroDesdeFila(fila, mapaIndices, indiceOriginal) {
   const registro = { _indiceOriginal: indiceOriginal };
   COLUMNAS.forEach((col, i) => registro[col.key] = String(fila[mapaIndices[i]] ?? "").trim());
   registro.cortoPlazo = canonSiNo(registro.cortoPlazo, false);
+  registro.historial = serializarHistorial(parsearHistorial(registro.historial));
   return registro;
 }
 function filasParaGuardar() {
@@ -307,6 +358,29 @@ async function subirTexto(ruta, texto) {
   if (!res.ok) throw new Error(`No se pudo guardar "${ruta}" (HTTP ${res.status}: ${await res.text()}).`);
   return res.json();
 }
+async function resolverFoto(rutaOriginal) {
+  const ruta = normalizarRutaFoto(rutaOriginal);
+  if (!ruta) return null;
+  if (esUrl(ruta)) return { miniatura: ruta, completa: ruta };
+  if (G.fotoCache.has(ruta)) return G.fotoCache.get(ruta);
+
+  const promesa = (async () => {
+    const intentos = ruta.includes("/") ? [ruta] : [ruta, `fotos/${ruta}`];
+    for (const intento of intentos) {
+      const path = encodeGraphPath(intento);
+      const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}?$expand=thumbnails`);
+      if (!res.ok) continue;
+      const item = await res.json();
+      const th = item.thumbnails && item.thumbnails[0];
+      const mini = th && (th.medium || th.large || th.small);
+      const completa = item["@microsoft.graph.downloadUrl"] || (mini && mini.url) || "";
+      if (mini || completa) return { miniatura: (mini && mini.url) || completa, completa };
+    }
+    return null;
+  })();
+  G.fotoCache.set(ruta, promesa);
+  return promesa;
+}
 
 // ---------- Datos ----------
 async function cargarDatos() {
@@ -324,6 +398,7 @@ async function cargarDatos() {
     const datos = tieneCabecera ? filas.slice(1) : filas;
     G.registros = datos.map((fila, indice) => registroDesdeFila(fila, mapa, indice));
   }
+  G.fotoCache.clear();
   poblarFiltros();
   render();
   setEstado(`${G.registros.length} artículo(s) cargado(s).`);
@@ -358,7 +433,9 @@ const CAMPOS_FILTRO = [
   { key: "ubicacion", label: "Ubicación", tipo: "texto", base: UBICACIONES },
   { key: "fechaCaducidad", label: "Fecha caducidad", tipo: "fecha" },
   { key: "cortoPlazo", label: "Corto plazo abierto", tipo: "texto", base: ["Sí", "No"] },
-  { key: "categoria", label: "Categoría", tipo: "texto", base: CATEGORIAS }
+  { key: "categoria", label: "Categoría", tipo: "texto", base: CATEGORIAS },
+  { key: "foto", label: "Foto", tipo: "texto" },
+  { key: "fechaUltimoCambio", label: "Fecha último cambio", tipo: "fecha" }
 ];
 // Estado de selección: key → Set de valores normalizados (ISO en fechas).
 const filtrosSel = new Map(CAMPOS_FILTRO.map(c => [c.key, new Set()]));
@@ -547,9 +624,14 @@ function tarjetaHtml(registro, indice) {
   const badgeUbicacion = agotado
     ? ""
     : `<span class="badge ubicacion">Ubicación: ${escapeHtml(valorVisible(registro.ubicacion))}</span>`;
+  const foto = normalizarRutaFoto(registro.foto);
+  const marcoFoto = foto
+    ? `<div class="foto-marco" data-foto-marco="${indice}"><span class="cargando-foto">Cargando foto…</span></div>`
+    : `<div class="foto-marco"><span class="sin-foto">Sin foto</span></div>`;
   // La categoría no se muestra en el listado (se filtra con los botones rápidos).
   return `
     <article class="articulo ${clase}" data-indice="${indice}">
+      ${marcoFoto}
       <div class="vista-previa-articulo">
         <p class="nombre-principal">${escapeHtml(valorVisible(registro.nombre, "Artículo sin nombre"))}</p>
         <div class="badges">
@@ -559,8 +641,8 @@ function tarjetaHtml(registro, indice) {
           ${agotado ? "" : badgeCaducidad(registro, dias)}
           ${cortoPlazo}
         </div>
+        <button class="editar" type="button" data-editar="${indice}">Ver / editar</button>
       </div>
-      <button class="editar" type="button" data-editar="${indice}">Ver / editar</button>
     </article>`;
 }
 function render() {
@@ -577,6 +659,27 @@ function render() {
     return;
   }
   lista.innerHTML = visibles.map(({ registro, indice }) => tarjetaHtml(registro, indice)).join("");
+  cargarFotosRenderizadas(visibles);
+}
+async function cargarFotosRenderizadas(visibles) {
+  for (const { registro, indice } of visibles) {
+    const marco = document.querySelector(`[data-foto-marco="${indice}"]`);
+    if (!marco || !registro.foto) continue;
+    try {
+      const foto = await resolverFoto(registro.foto);
+      if (!marco.isConnected) continue;
+      if (!foto || !foto.miniatura) {
+        marco.innerHTML = `<span class="sin-foto">Foto no encontrada</span>`;
+        continue;
+      }
+      marco.innerHTML = `<img src="${escapeHtml(foto.miniatura)}" alt="Foto de ${escapeHtml(registro.nombre)}" loading="lazy" />`
+        + (foto.completa ? `<button type="button" data-abrir-foto="${indice}" aria-label="Abrir foto"></button>` : "");
+      marco.dataset.urlCompleta = foto.completa || foto.miniatura;
+    } catch (error) {
+      if (marco.isConnected) marco.innerHTML = `<span class="sin-foto">No se pudo cargar</span>`;
+      console.warn("No se pudo cargar la foto", registro.foto, error);
+    }
+  }
 }
 
 // ---------- Editor (crear / editar / eliminar) ----------
@@ -604,8 +707,13 @@ function abrirEditor(indice) {
   $("eCategoria").value = esNuevo
     ? ""
     : (CATEGORIAS.find(v => norm(v) === norm(registro.categoria)) || "");
+  $("eFoto").value = esNuevo ? "" : (registro.foto || "");
+  // Fecha último cambio: se propone SIEMPRE hoy; Cancelar no guarda nada,
+  // así que la fecha anterior se conserva si no se confirma.
+  $("eFechaUltimoCambio").value = hoyIso();
 
   $("btnEliminarEditor").hidden = esNuevo;
+  prepararHistorial(registro);
 
   const dialogo = $("editor");
   if (typeof dialogo.showModal === "function") dialogo.showModal();
@@ -615,6 +723,50 @@ function cerrarEditor() {
   const dialogo = $("editor");
   if (typeof dialogo.close === "function") dialogo.close();
   else dialogo.removeAttribute("open");
+}
+// ---------- Historial en el editor ----------
+function fechaHoraVisible(valor) {
+  if (!valor) return "Fecha no registrada";
+  const fecha = new Date(valor);
+  if (Number.isNaN(fecha.getTime())) return valorVisible(valor);
+  return new Intl.DateTimeFormat("es-ES", { dateStyle: "short", timeStyle: "short" }).format(fecha);
+}
+function datoHtml(label, valor, fecha = false) {
+  const texto = fecha ? fechaVisible(valor) : valorVisible(valor);
+  return `<div class="dato"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(texto)}</dd></div>`;
+}
+function historialHtml(registro) {
+  const historial = parsearHistorial(registro && registro.historial);
+  if (!historial.length) return `<p class="historial-vacio">Todavía no hay estados anteriores guardados.</p>`;
+  return historial.map((uso, indice) => `
+    <article class="uso-anterior">
+      <div class="uso-anterior-cabecera">
+        <strong>Estado anterior ${indice + 1}</strong>
+        <span>${escapeHtml(fechaHoraVisible(uso.guardadoEn))}</span>
+      </div>
+      <dl class="datos-historial">
+        ${datoHtml("Cantidad", uso.cantidad)}
+        ${datoHtml("Casa", uso.casa)}
+        ${datoHtml("Ubicación", uso.ubicacion)}
+        ${datoHtml("Fecha caducidad", uso.fechaCaducidad, true)}
+        ${datoHtml("Corto plazo abierto", uso.cortoPlazo)}
+        ${datoHtml("Categoría", uso.categoria)}
+        ${datoHtml("Fecha último cambio", uso.fechaUltimoCambio, true)}
+      </dl>
+    </article>`).join("");
+}
+function prepararHistorial(registro) {
+  $("historialUsos").innerHTML = historialHtml(registro);
+  $("panelHistorial").hidden = true;
+  $("btnHistorial").setAttribute("aria-expanded", "false");
+  $("btnHistorial").textContent = `Mostrar los ${MAX_HISTORIAL} estados anteriores`;
+}
+function alternarHistorial() {
+  const panel = $("panelHistorial");
+  const mostrar = panel.hidden;
+  panel.hidden = !mostrar;
+  $("btnHistorial").setAttribute("aria-expanded", mostrar ? "true" : "false");
+  $("btnHistorial").textContent = mostrar ? "Ocultar estados anteriores" : `Mostrar los ${MAX_HISTORIAL} estados anteriores`;
 }
 async function guardarEditor(evento) {
   evento.preventDefault();
@@ -630,11 +782,13 @@ async function guardarEditor(evento) {
     ubicacion: $("eUbicacion").value,
     fechaCaducidad: $("eFechaCaducidad").value,
     cortoPlazo: $("eCortoPlazo").value,
-    categoria: $("eCategoria").value
+    categoria: $("eCategoria").value,
+    foto: $("eFoto").value.trim(),
+    fechaUltimoCambio: $("eFechaUltimoCambio").value
   };
 
   if (esNuevo) {
-    const registro = Object.assign({ _indiceOriginal: siguienteIndiceOriginal() }, nuevo);
+    const registro = Object.assign({ _indiceOriginal: siguienteIndiceOriginal(), historial: serializarHistorial([]) }, nuevo);
     G.registros.push(registro);
     poblarFiltros();
     render();
@@ -654,12 +808,18 @@ async function guardarEditor(evento) {
   const registro = G.registros[indice];
   if (!registro) return;
   const copiaAnterior = Object.assign({}, registro);
-  const hayCambios = Object.keys(nuevo).some(key => String(registro[key] || "").trim() !== String(nuevo[key] || "").trim());
+  // La fecha último cambio se propone sola con hoy, así que no cuenta como
+  // cambio por sí misma: si no se ha tocado nada más, no se guarda nada y
+  // se conserva la fecha anterior.
+  const hayCambios = Object.keys(nuevo)
+    .filter(key => key !== "fechaUltimoCambio")
+    .some(key => String(registro[key] || "").trim() !== String(nuevo[key] || "").trim());
   if (!hayCambios) {
     setEstado("No había cambios que guardar.");
     cerrarEditor();
     return;
   }
+  apilarHistorial(registro);
   Object.assign(registro, nuevo);
   poblarFiltros();
   render();
@@ -699,9 +859,11 @@ async function marcarSinExistencias() {
   if (!registro) return;
   const nombre = valorVisible(registro.nombre, "este artículo");
   const copiaAnterior = Object.assign({}, registro);
+  apilarHistorial(registro);
   registro.cantidad = "0";
   registro.ubicacion = "";
   registro.fechaCaducidad = "";
+  registro.fechaUltimoCambio = hoyIso();
   poblarFiltros();
   render();
   try {
@@ -805,6 +967,7 @@ function updateAuthUI() {
         loginBtn.disabled = false;
         inicializado = false;
         G.registros = [];
+        G.fotoCache.clear();
         $("listaDespensa").innerHTML = "";
         mostrarVista("");
         setEstado("Inicia sesión para empezar.");
@@ -906,8 +1069,15 @@ $("btnNuevo").addEventListener("click", abrirSelectorNuevo);
 $("btnRecargar").addEventListener("click", () => cargarDatos().catch(error => setEstado(`Error: ${error.message}`, true)));
 $("listaDespensa").addEventListener("click", event => {
   const editar = event.target.closest("[data-editar]");
-  if (editar) abrirEditor(Number(editar.dataset.editar));
+  if (editar) { abrirEditor(Number(editar.dataset.editar)); return; }
+  const abrirFoto = event.target.closest("[data-abrir-foto]");
+  if (abrirFoto) {
+    const marco = abrirFoto.closest(".foto-marco");
+    const url = marco && marco.dataset.urlCompleta;
+    if (url) window.open(url, "_blank", "noopener");
+  }
 });
+$("btnHistorial").addEventListener("click", alternarHistorial);
 
 // Selector de nuevo: elegir plantilla del catálogo o crear desde cero.
 $("listaPlantillas").addEventListener("click", event => {

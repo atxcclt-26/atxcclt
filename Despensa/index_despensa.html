@@ -192,15 +192,36 @@
     #listaDespensa { display: flex; flex-direction: column; gap: 10px; }
     .articulo {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: 116px minmax(0, 1fr);
       gap: 12px;
-      align-items: center;
       border: 1px solid var(--borde);
       border-radius: 14px;
       background: var(--panel);
-      padding: 10px 12px;
+      padding: 10px;
       box-shadow: var(--sombra);
     }
+    .foto-marco {
+      position: relative;
+      width: 116px;
+      height: 116px;
+      border-radius: 11px;
+      overflow: hidden;
+      border: 1px solid var(--borde);
+      background: #f1ede4;
+    }
+    .foto-marco img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .foto-marco .sin-foto, .foto-marco .cargando-foto {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      color: var(--suave);
+      text-align: center;
+      font-size: .78rem;
+    }
+    .foto-marco button { position: absolute; inset: 0; border: 0; background: transparent; padding: 0; }
     /* Matiz de fondo por casa + tono por ubicación:
        oscuro = congelador, medio = frigo, claro = armario/arriba */
     .articulo.casa-castefa.tono-oscuro   { background: #c9def4; }
@@ -240,6 +261,7 @@
     .badge.caducidad-caducado { background: #fdecea; color: var(--error); }
     .badge.corto-plazo { background: #f6e7cc; color: #6a440f; }
     .editar {
+      margin-top: auto;
       border: 0;
       border-radius: 8px;
       background: var(--secundario);
@@ -249,6 +271,26 @@
       font-size: .82rem;
       white-space: nowrap;
     }
+    .badges { margin: 6px 0 8px; }
+    .historial-control { margin-top: 10px; }
+    #btnHistorial { width: 100%; text-align: center; }
+    .historial-usos {
+      margin: 8px 0 0;
+      padding: 9px;
+      border: 1px solid var(--borde);
+      border-radius: 10px;
+      background: #fcfbf8;
+    }
+    .historial-usos h3 { margin: 0 0 8px; font-size: .92rem; }
+    #historialUsos { display: flex; flex-direction: column; gap: 7px; }
+    .uso-anterior { border: 1px solid var(--borde); border-radius: 8px; padding: 8px; background: #fff; }
+    .uso-anterior-cabecera { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: .75rem; }
+    .uso-anterior-cabecera span { color: var(--suave); }
+    .datos-historial { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 9px; margin: 0; }
+    .dato { min-width: 0; }
+    .dato dt { color: var(--suave); font-size: .66rem; font-weight: 700; margin-bottom: 1px; }
+    .dato dd { margin: 0; font-size: .82rem; overflow-wrap: anywhere; }
+    .historial-vacio { margin: 0; color: var(--suave); font-size: .82rem; }
     .vacio-lista {
       border: 1px dashed var(--borde);
       border-radius: 12px;
@@ -342,8 +384,9 @@
       main { padding-top: 10px; }
       .boton-rapido { padding: 7px 9px; font-size: .8rem; }
       .filtros-panel { padding: 10px; }
-      .articulo { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 9px; }
-      .editar { justify-self: start; }
+      .articulo { grid-template-columns: 88px minmax(0, 1fr); gap: 9px; padding: 8px; }
+      .foto-marco { width: 88px; height: 88px; }
+      .editar { padding: 7px 9px; font-size: .76rem; }
       .nombre-principal { font-size: 1.12rem; }
       .badges { gap: 4px; }
       .badge { font-size: .66rem; min-height: 23px; padding: 3px 6px; }
@@ -448,7 +491,21 @@
             <option value="Otros">Otros</option>
           </select>
         </label>
+        <label class="campo campo-editor">Foto
+          <input id="eFoto" type="text" maxlength="300" placeholder="fichero en fotos/ o URL (opcional)" />
+        </label>
+        <label class="campo campo-editor">Fecha último cambio
+          <input id="eFechaUltimoCambio" type="date" />
+        </label>
       </div>
+
+      <div class="historial-control">
+        <button id="btnHistorial" class="boton" type="button" aria-expanded="false" aria-controls="panelHistorial">Mostrar los 5 estados anteriores</button>
+      </div>
+      <section id="panelHistorial" class="historial-usos" aria-labelledby="tituloHistorial" hidden>
+        <h3 id="tituloHistorial">Estados anteriores</h3>
+        <div id="historialUsos"></div>
+      </section>
 
       <div class="dialogo-acciones">
         <button id="btnEliminarEditor" class="boton peligro" type="button">Eliminar</button>
@@ -493,6 +550,6 @@
   </dialog>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app_despensa.js?v=2026072403"></script>
+  <script src="app_despensa.js?v=2026072404"></script>
 </body>
 </html>
