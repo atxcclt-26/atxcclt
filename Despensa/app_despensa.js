@@ -12,8 +12,11 @@
 //
 // Rev. 3 (2026-07-24):
 // - Ficheros renombrados con sufijo "_despensa": index_despensa.html,
-//   app_despensa.js, manifest_despensa.json. REDIRECT_PAGE apunta ahora a
-//   la URL completa con index_despensa.html.
+//   app_despensa.js, manifest_despensa.json.
+// - Despliegue como carpeta Despensa/ dentro del repo atxcclt (igual que
+//   Tuppers). REDIRECT_PAGE = https://atxcclt-26.github.io/atxcclt/Despensa/
+//   (URI ya registrado en Azure). Un index.html reenviador conserva el hash
+//   de la respuesta MSAL y salta a index_despensa.html.
 //
 // Rev. 2 (2026-07-24):
 // - Nuevo campo Cantidad (texto libre, p. ej. "30 gr").
@@ -49,11 +52,10 @@ const FILE_DATOS = "despensa.csv";
 const GRAPH = "https://graph.microsoft.com/v1.0";
 // =====================
 
-// Misma arquitectura de autenticación MSAL que Tuppers.
-// Como el fichero ya no se llama index.html, la URL de la página incluye el
-// nombre completo. Recuerda añadir esta URL EXACTA como redirect URI (SPA)
-// en el registro de Azure.
-const REDIRECT_PAGE = "https://atxcclt-26.github.io/Despensa/index_despensa.html";
+// Misma arquitectura de autenticación MSAL que Tuppers: el redirect URI es
+// la URL de la carpeta dentro del repo atxcclt, ya registrada en Azure.
+// index.html (reenviador) conserva el hash y salta a index_despensa.html.
+const REDIRECT_PAGE = "https://atxcclt-26.github.io/atxcclt/Despensa/";
 const msalConfig = {
   auth: {
     clientId: "24e9d6d3-d9ad-437e-b7f6-1a27f48c2696",

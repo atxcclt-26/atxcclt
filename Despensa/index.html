@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Despensa</title>
+  <!-- Reenviador: la carpeta Despensa/ es el redirect URI registrado en
+       Azure (igual que Tuppers), pero la app vive en index_despensa.html.
+       Se conserva query y hash para no perder la respuesta de MSAL. -->
+  <script>
+    location.replace("index_despensa.html" + location.search + location.hash);
+  </script>
+</head>
+<body>
+  <p>Redirigiendo a la despensa… <a href="index_despensa.html">Continuar</a></p>
+</body>
+</html>
