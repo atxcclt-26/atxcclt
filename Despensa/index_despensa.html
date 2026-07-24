@@ -481,6 +481,7 @@
         <h2>Contenido de la despensa</h2>
         <div class="acciones">
           <button id="btnNuevo" class="boton primario" type="button">＋ Nuevo artículo</button>
+          <button id="btnGenerico" class="boton" type="button">💬 Edición genérica</button>
           <button id="btnRecargar" class="boton" type="button">↻ Recargar</button>
         </div>
       </div>
@@ -488,9 +489,12 @@
       <div class="filtros-rapidos" role="group" aria-label="Filtros rápidos">
         <button id="btnCasaCastefa" class="boton boton-rapido castefa" type="button" aria-pressed="false">Castefa</button>
         <button id="btnCasaComarruga" class="boton boton-rapido comarruga" type="button" aria-pressed="false">Comarruga</button>
+        <button id="btnCatCarne" class="boton boton-rapido categoria" type="button" aria-pressed="false">Carne</button>
+        <button id="btnCatCereales" class="boton boton-rapido categoria" type="button" aria-pressed="false">Cereales</button>
         <button id="btnCatCesped" class="boton boton-rapido categoria" type="button" aria-pressed="false">Cesped</button>
         <button id="btnCatFrutosSecos" class="boton boton-rapido categoria" type="button" aria-pressed="false">Frutos secos</button>
         <button id="btnCatHarinas" class="boton boton-rapido categoria" type="button" aria-pressed="false">Harinas</button>
+        <button id="btnCatPescado" class="boton boton-rapido categoria" type="button" aria-pressed="false">Pescado</button>
         <button id="btnCatOtros" class="boton boton-rapido categoria" type="button" aria-pressed="false">Otros</button>
       </div>
 
@@ -549,9 +553,12 @@
         <label class="campo campo-editor campo-destacado">Categoría
           <select id="eCategoria" required>
             <option value="">Selecciona</option>
+            <option value="Carne">Carne</option>
+            <option value="Cereales">Cereales</option>
             <option value="Cesped">Cesped</option>
             <option value="Frutos secos">Frutos secos</option>
             <option value="Harinas">Harinas</option>
+            <option value="Pescado">Pescado</option>
             <option value="Otros">Otros</option>
           </select>
         </label>
@@ -646,7 +653,25 @@
     </div>
   </dialog>
 
+  <dialog id="editorGenerico">
+    <div class="dialogo-cabecera">
+      <h2>💬 Edición genérica</h2>
+      <button id="btnCerrarGenerico" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <div class="cuerpo-dialogo libre-cuerpo">
+      <div id="chatGenerico" class="chat-libre" aria-live="polite"></div>
+      <form id="formGenerico" class="fila-libre">
+        <input id="inputGenerico" type="text" autocomplete="off" enterkeyhint="send"
+               placeholder="Nombre del ingrediente…" />
+        <button class="boton primario" type="submit">Enviar</button>
+      </form>
+      <div class="acciones-libre">
+        <button id="btnCancelarGenerico" class="boton" type="button">Cerrar</button>
+      </div>
+    </div>
+  </dialog>
+
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app_despensa.js?v=2026072406"></script>
+  <script src="app_despensa.js?v=2026072407"></script>
 </body>
 </html>

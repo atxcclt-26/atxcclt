@@ -13,6 +13,18 @@
 // Todos los campos son editables desde la web (Historial es interno). La app
 // permite crear y eliminar artículos.
 //
+// Rev. 7 (2026-07-24):
+// - Categorías nuevas: Carne, Pescado y Cereales (botones rápidos, editor,
+//   filtros e intérprete).
+// - Botón "💬 Edición genérica" en la barra superior: pregunta el
+//   ingrediente; si existe (búsqueda anti-duplicados normalizada: sin
+//   acentos, mayúsculas ni plurales simples) abre su ficha; si hay
+//   parecidos los ofrece numerados; si no existe, alta guiada paso a paso
+//   con resumen y confirmación antes de crear.
+// - Garantía de unicidad de nombres: el editor clásico bloquea altas y
+//   renombrados que colisionen con un artículo existente, y la edición
+//   libre bloquea renombrados duplicados al guardar.
+//
 // Rev. 6 (2026-07-24):
 // - Edición libre conversacional (botón 💬 en cada tarjeta, junto al editor
 //   clásico): intérprete local de instrucciones en español (sin backend ni
@@ -128,7 +140,7 @@ const CAMPOS_HISTORIAL = ["cantidad", "casa", "ubicacion", "fechaCaducidad", "co
 
 const CASAS = ["Comarruga", "Castefa"];
 const UBICACIONES = ["Frigo", "Congelador", "Armario", "Arriba"];
-const CATEGORIAS = ["Cesped", "Frutos secos", "Harinas", "Otros"];
+const CATEGORIAS = ["Carne", "Cereales", "Cesped", "Frutos secos", "Harinas", "Pescado", "Otros"];
 const ORDEN_CASAS = new Map([["comarruga", 0], ["castefa", 1]]);
 const ORDEN_UBICACIONES = new Map([["frigo", 0], ["congelador", 1], ["armario", 2], ["arriba", 3], ["", 4]]);
 const collator = new Intl.Collator("es", { numeric: true, sensitivity: "base" });
@@ -214,6 +226,39 @@ function cantidadDe(registro) { return String(registro.cantidad || "").trim(); }
 function tieneCantidad(registro) { return cantidadDe(registro) !== ""; }
 function esAgotado(registro) { return cantidadDe(registro) === "0"; }
 function esVisibleEnListado(registro) { return tieneCantidad(registro) && !esAgotado(registro); }
+
+// Unicidad de nombres: comparación sin acentos, mayúsculas, signos ni
+// plurales simples ("cebolla" ≈ "Cebollas"). Se usa en el editor clásico,
+// en la edición libre (renombrar) y en la edición genérica.
+function normNombre(valor) {
+  return norm(valor).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function raizNombre(valor) {
+  return normNombre(valor).split(" ").map(w => w.length > 3 ? w.replace(/(?:es|s)$/, "") : w).join(" ");
+}
+function mismoNombre(a, b) {
+  const na = normNombre(a), nb = normNombre(b);
+  if (!na || !nb) return false;
+  return na === nb || raizNombre(a) === raizNombre(b);
+}
+// → { exacto: indice|null, similares: [indices] } sobre TODOS los registros
+// (también plantillas y "No queda nada": clave para no duplicar).
+function buscarPorNombre(nombre) {
+  const objetivo = normNombre(nombre);
+  let exacto = null;
+  const similares = [];
+  if (!objetivo) return { exacto, similares };
+  G.registros.forEach((registro, indice) => {
+    const n = normNombre(registro.nombre);
+    if (!n) return;
+    if (mismoNombre(registro.nombre, nombre)) { if (exacto === null) exacto = indice; return; }
+    if (objetivo.length >= 3 && (n.includes(objetivo) || objetivo.includes(n))) similares.push(indice);
+  });
+  return { exacto, similares };
+}
+function indiceNombreDuplicado(nombre, indiceExcluido) {
+  return G.registros.findIndex((r, i) => i !== indiceExcluido && mismoNombre(r.nombre, nombre));
+}
 
 // Historial: JSON con los últimos MAX_HISTORIAL estados anteriores.
 function parsearHistorial(valor) {
@@ -912,6 +957,15 @@ async function guardarEditor(evento) {
     fechaUltimoCambio: $("eFechaUltimoCambio").value
   };
 
+  // Anti-duplicados: el nombre no puede colisionar con otro artículo
+  // existente (comparación normalizada, plantillas y agotados incluidos).
+  const indiceExcluido = esNuevo ? -1 : Number(valorIndice);
+  const duplicado = indiceNombreDuplicado(nuevo.nombre, indiceExcluido);
+  if (duplicado !== -1) {
+    setEstado(`Ya existe "${G.registros[duplicado].nombre}" (los nombres deben ser únicos). Si es el mismo artículo, edítalo o repónlo desde "Nuevo artículo".`, true);
+    return;
+  }
+
   // Foto pendiente: solo se sube si el campo sigue apuntando a su ruta
   // (si se ha editado o vaciado el campo después, se descarta).
   const pendiente = fotoSeleccionada && fotoSeleccionada.ruta === nuevo.foto ? fotoSeleccionada : null;
@@ -1179,6 +1233,9 @@ function buscarCasa(t) {
 function buscarCategoria(t) {
   if (/frutos?\s*secos?/.test(t)) return "Frutos secos";
   if (/\bharinas?\b/.test(t)) return "Harinas";
+  if (/\bcarnes?\b/.test(t)) return "Carne";
+  if (/\bpescados?\b/.test(t)) return "Pescado";
+  if (/\bcereal(?:es)?\b/.test(t)) return "Cereales";
   if (/\bcesped\b/.test(t)) return "Cesped";
   if (/\botros?\b/.test(t)) return "Otros";
   return null;
@@ -1384,6 +1441,12 @@ async function guardarEdicionLibre() {
   const registro = G.registros[libreIndice];
   if (!registro) return;
   if (!cambiosLibre.length) { agregarMensajeLibre("app", "No hay cambios pendientes que guardar."); return; }
+  const proyectadoPrevio = estadoProyectado(registro);
+  const duplicado = indiceNombreDuplicado(proyectadoPrevio.nombre, libreIndice);
+  if (duplicado !== -1) {
+    agregarMensajeLibre("app", `No puedo guardar: ya existe "${G.registros[duplicado].nombre}" y los nombres deben ser únicos. Di "deshaz" para quitar el renombrado.`);
+    return;
+  }
   const copiaAnterior = Object.assign({}, registro);
   const boton = $("btnGuardarLibre");
   boton.disabled = true;
@@ -1403,6 +1466,189 @@ async function guardarEdicionLibre() {
     render();
     boton.disabled = false;
     agregarMensajeLibre("app", `Error guardando: ${error.message}. Los cambios siguen pendientes.`);
+  }
+}
+
+// ---------- Edición genérica (asistente por nombre) ----------
+// Botón superior "💬 Edición genérica": pregunta el ingrediente. Si existe
+// (comparación anti-duplicados normalizada) abre su ficha; si hay parecidos
+// los ofrece numerados; si no, alta guiada paso a paso con confirmación.
+let genPaso = null;         // "nombre" | "similar" | "cantidad" | "casa" | "ubicacion" | "caducidad" | "cortoPlazo" | "categoria" | "confirmar"
+let genDatos = {};
+let genCandidatos = [];
+
+function agregarMensajeGenerico(quien, texto) {
+  const chat = $("chatGenerico");
+  const div = document.createElement("div");
+  div.className = `msg ${quien}`;
+  div.textContent = texto;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+function resumenRegistroCorto(registro) {
+  const partes = [registro.casa, registro.ubicacion, cantidadDe(registro) === "" ? "sin cantidad" : (esAgotado(registro) ? "no queda nada" : cantidadDe(registro))];
+  return partes.filter(Boolean).join(" · ");
+}
+function preguntarNombreGenerico() {
+  genPaso = "nombre";
+  genDatos = {};
+  genCandidatos = [];
+  agregarMensajeGenerico("app", "¿Qué ingrediente quieres editar o crear?");
+}
+function abrirEditorGenerico() {
+  $("chatGenerico").innerHTML = "";
+  $("inputGenerico").value = "";
+  const dialogo = $("editorGenerico");
+  if (typeof dialogo.showModal === "function") dialogo.showModal();
+  else dialogo.setAttribute("open", "");
+  preguntarNombreGenerico();
+  $("inputGenerico").focus();
+}
+function cerrarEditorGenerico() {
+  genPaso = null;
+  genDatos = {};
+  genCandidatos = [];
+  const dialogo = $("editorGenerico");
+  if (typeof dialogo.close === "function") dialogo.close();
+  else dialogo.removeAttribute("open");
+}
+function iniciarAltaGuiada(nombre) {
+  genDatos = { nombre };
+  genPaso = "cantidad";
+  agregarMensajeGenerico("app", `No existe "${nombre}", así que lo creamos paso a paso. ¿Qué cantidad hay? (p. ej. "300 gr", "2 bricks")`);
+}
+function resumenAltaGuiada() {
+  const d = genDatos;
+  return `Resumen: "${d.nombre}" — ${d.cantidad} en ${d.ubicacion} (${d.casa}), ` +
+    (d.fechaCaducidad ? `caduca ${fechaVisible(d.fechaCaducidad)}` : "sin caducidad") +
+    `, corto plazo abierto: ${d.cortoPlazo}, categoría: ${d.categoria}. ¿Lo creo? (sí/no)`;
+}
+async function crearDesdeGenerico() {
+  // Re-comprobación anti-duplicados justo antes de crear.
+  const duplicado = indiceNombreDuplicado(genDatos.nombre, -1);
+  if (duplicado !== -1) {
+    agregarMensajeGenerico("app", `Vaya, ya existe "${G.registros[duplicado].nombre}". No lo duplico; te abro su ficha.`);
+    const indice = duplicado;
+    cerrarEditorGenerico();
+    abrirEditor(indice);
+    return;
+  }
+  const registro = Object.assign({ _indiceOriginal: siguienteIndiceOriginal(), historial: serializarHistorial([]), foto: "", fechaUltimoCambio: hoyIso() }, genDatos);
+  G.registros.push(registro);
+  poblarFiltros();
+  render();
+  try {
+    await guardarDatos();
+    agregarMensajeGenerico("app", `"${registro.nombre}" creado. ✅ ¿Otro ingrediente? (escribe el nombre, o cierra)`);
+    genPaso = "nombre";
+    genDatos = {};
+  } catch (error) {
+    G.registros = G.registros.filter(r => r !== registro);
+    poblarFiltros();
+    render();
+    agregarMensajeGenerico("app", `Error guardando: ${error.message}. Responde "sí" para reintentar o "no" para dejarlo.`);
+    genPaso = "confirmar";
+  }
+}
+function procesarEntradaGenerico(texto) {
+  const t = norm(texto);
+  if (/^(cancela|cancelar|salir|cierra)\b/.test(t)) { cerrarEditorGenerico(); return; }
+
+  if (genPaso === "nombre") {
+    const nombre = texto.trim();
+    if (!nombre) { agregarMensajeGenerico("app", "Dime un nombre de ingrediente."); return; }
+    const { exacto, similares } = buscarPorNombre(nombre);
+    if (exacto !== null) {
+      const registro = G.registros[exacto];
+      agregarMensajeGenerico("app", `Lo tengo: "${registro.nombre}" (${resumenRegistroCorto(registro)}). Te abro su ficha.`);
+      const indice = exacto;
+      setTimeout(() => { cerrarEditorGenerico(); abrirEditor(indice); }, 450);
+      return;
+    }
+    if (similares.length) {
+      genCandidatos = similares;
+      genDatos = { nombre };
+      genPaso = "similar";
+      const lista = similares.map((indice, i) => `${i + 1}) ${G.registros[indice].nombre} (${resumenRegistroCorto(G.registros[indice])})`).join("\n");
+      agregarMensajeGenerico("app", `No hay "${nombre}" exacto, pero se parecen:\n${lista}\n¿Es alguno de estos? Responde el número, o "no" para crear "${nombre}" como nuevo.`);
+      return;
+    }
+    iniciarAltaGuiada(nombre);
+    return;
+  }
+  if (genPaso === "similar") {
+    const numero = parseInt(t, 10);
+    if (!Number.isNaN(numero) && numero >= 1 && numero <= genCandidatos.length) {
+      const indice = genCandidatos[numero - 1];
+      agregarMensajeGenerico("app", `Te abro "${G.registros[indice].nombre}".`);
+      setTimeout(() => { cerrarEditorGenerico(); abrirEditor(indice); }, 450);
+      return;
+    }
+    if (/^(no|nuevo|crear|crea)\b/.test(t)) { iniciarAltaGuiada(genDatos.nombre); return; }
+    agregarMensajeGenerico("app", `Responde con el número del artículo, o "no" para crear "${genDatos.nombre}" nuevo.`);
+    return;
+  }
+  if (genPaso === "cantidad") {
+    const cantidad = texto.trim();
+    if (!cantidad) { agregarMensajeGenerico("app", `Dime la cantidad, p. ej. "300 gr".`); return; }
+    genDatos.cantidad = cantidad;
+    genPaso = "casa";
+    agregarMensajeGenerico("app", "¿En qué casa está, Castefa o Comarruga?");
+    return;
+  }
+  if (genPaso === "casa") {
+    const casa = buscarCasa(t);
+    if (!casa) { agregarMensajeGenerico("app", "No te he entendido: ¿Castefa o Comarruga?"); return; }
+    genDatos.casa = casa;
+    genPaso = "ubicacion";
+    agregarMensajeGenerico("app", "¿Dónde está: Frigo, Congelador, Armario o Arriba?");
+    return;
+  }
+  if (genPaso === "ubicacion") {
+    const ubicacion = buscarUbicacion(t);
+    if (!ubicacion) { agregarMensajeGenerico("app", "No te he entendido: ¿Frigo, Congelador, Armario o Arriba?"); return; }
+    genDatos.ubicacion = ubicacion;
+    genPaso = "caducidad";
+    agregarMensajeGenerico("app", `¿Fecha de caducidad? (p. ej. "3/8", "2026-09-01", "en 2 semanas"; o "no" si no tiene)`);
+    return;
+  }
+  if (genPaso === "caducidad") {
+    if (/^(no|sin|ninguna|nada)\b/.test(t)) genDatos.fechaCaducidad = "";
+    else {
+      const fecha = parsearFechaLibre(t);
+      if (!fecha) { agregarMensajeGenerico("app", `No he entendido la fecha. Prueba "3/8", "2026-09-01", "en 2 semanas" o "no".`); return; }
+      genDatos.fechaCaducidad = fecha;
+    }
+    genPaso = "cortoPlazo";
+    agregarMensajeGenerico("app", "Una vez abierto, ¿caduca a corto plazo? (sí/no)");
+    return;
+  }
+  if (genPaso === "cortoPlazo") {
+    if (/^(si|s)\b/.test(t)) genDatos.cortoPlazo = "Sí";
+    else if (/^(no|n)\b/.test(t)) genDatos.cortoPlazo = "No";
+    else { agregarMensajeGenerico("app", "¿Sí o no?"); return; }
+    genPaso = "categoria";
+    agregarMensajeGenerico("app", `¿Categoría? (${CATEGORIAS.join(", ")})`);
+    return;
+  }
+  if (genPaso === "categoria") {
+    const categoria = buscarCategoria(t);
+    if (!categoria) { agregarMensajeGenerico("app", `No te he entendido. Categorías: ${CATEGORIAS.join(", ")}.`); return; }
+    genDatos.categoria = categoria;
+    genPaso = "confirmar";
+    agregarMensajeGenerico("app", resumenAltaGuiada());
+    return;
+  }
+  if (genPaso === "confirmar") {
+    if (/^(si|s|vale|ok|confirmo|adelante)\b/.test(t)) { crearDesdeGenerico(); return; }
+    if (/^(no|n)\b/.test(t)) {
+      agregarMensajeGenerico("app", "De acuerdo, no lo creo. ¿Otro ingrediente? (escribe el nombre, o cierra)");
+      genPaso = "nombre";
+      genDatos = {};
+      return;
+    }
+    agregarMensajeGenerico("app", "¿Lo creo? Responde sí o no.");
+    return;
   }
 }
 
@@ -1517,9 +1763,12 @@ $("btnLimpiar").addEventListener("click", limpiarFiltros);
 const BOTONES_RAPIDOS = [
   ["btnCasaCastefa", "castefa", casasBoton],
   ["btnCasaComarruga", "comarruga", casasBoton],
+  ["btnCatCarne", "carne", categoriasBoton],
+  ["btnCatCereales", "cereales", categoriasBoton],
   ["btnCatCesped", "cesped", categoriasBoton],
   ["btnCatFrutosSecos", "frutos secos", categoriasBoton],
   ["btnCatHarinas", "harinas", categoriasBoton],
+  ["btnCatPescado", "pescado", categoriasBoton],
   ["btnCatOtros", "otros", categoriasBoton]
 ];
 function actualizarBotonesRapidos() {
@@ -1543,6 +1792,21 @@ BOTONES_RAPIDOS.forEach(([id, clave, grupo]) => {
 });
 
 $("btnNuevo").addEventListener("click", abrirSelectorNuevo);
+$("btnGenerico").addEventListener("click", abrirEditorGenerico);
+$("formGenerico").addEventListener("submit", event => {
+  event.preventDefault();
+  const texto = $("inputGenerico").value.trim();
+  if (!texto) return;
+  agregarMensajeGenerico("usuario", texto);
+  $("inputGenerico").value = "";
+  procesarEntradaGenerico(texto);
+  $("inputGenerico").focus();
+});
+$("btnCerrarGenerico").addEventListener("click", cerrarEditorGenerico);
+$("btnCancelarGenerico").addEventListener("click", cerrarEditorGenerico);
+$("editorGenerico").addEventListener("click", event => {
+  if (event.target === $("editorGenerico")) cerrarEditorGenerico();
+});
 $("btnRecargar").addEventListener("click", () => cargarDatos().catch(error => setEstado(`Error: ${error.message}`, true)));
 $("listaDespensa").addEventListener("click", event => {
   const editar = event.target.closest("[data-editar]");
