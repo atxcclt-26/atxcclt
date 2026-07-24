@@ -13,7 +13,7 @@
 // Todos los campos son editables desde la web (Historial es interno). La app
 // permite crear y eliminar artículos.
 //
-// Rev. 6 (2026-07-24):
+// Rev. 6 (2026-07-24 ):
 // - Edición libre conversacional (botón 💬 en cada tarjeta, junto al editor
 //   clásico): intérprete local de instrucciones en español (sin backend ni
 //   API externa). Entiende cantidad relativa/absoluta ("quita 100 gramos",
