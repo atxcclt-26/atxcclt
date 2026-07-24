@@ -230,10 +230,9 @@
     .articulo.casa-comarruga.tono-oscuro { background: #c9e9d1; }
     .articulo.casa-comarruga.tono-medio  { background: #ddf1e2; }
     .articulo.casa-comarruga.tono-claro  { background: #f0f9f3; }
-    /* Borde izquierdo por estado: rojo caducado, gris agotado, verde resto */
+    /* Borde izquierdo por estado: rojo caducado, verde resto */
     .articulo.caducado     { border-left: 6px solid var(--error); }
     .articulo.sin-urgencia { border-left: 6px solid #4b9b69; }
-    .articulo.agotado      { border-left: 6px solid #9aa19c; opacity: .72; }
 
     .vista-previa-articulo { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
     .nombre-principal {
@@ -257,7 +256,6 @@
     }
     .badge.ubicacion { background: #eaf2f9; color: #264f70; }
     .badge.cantidad { background: #e8f1ea; color: #185137; }
-    .badge.cantidad-cero { background: #ececec; color: #55524c; }
     .badge.caducidad-caducado { background: #fdecea; color: var(--error); }
     .badge.corto-plazo { background: #f6e7cc; color: #6a440f; }
     .editar {
@@ -291,6 +289,23 @@
     .dato dt { color: var(--suave); font-size: .66rem; font-weight: 700; margin-bottom: 1px; }
     .dato dd { margin: 0; font-size: .82rem; overflow-wrap: anywhere; }
     .historial-vacio { margin: 0; color: var(--suave); font-size: .82rem; }
+
+    /* Bloque de foto del editor */
+    .foto-controles { display: flex; gap: 10px; align-items: flex-start; }
+    .foto-preview { width: 96px; height: 96px; flex: none; }
+    .foto-campos { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+    .foto-campos input[type=text] {
+      width: 100%;
+      min-height: 37px;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 7px 8px;
+      font-weight: 400;
+    }
+    .foto-botones { display: flex; gap: 6px; flex-wrap: wrap; }
+    .foto-botones .boton { padding: 7px 10px; font-size: .8rem; }
     .vacio-lista {
       border: 1px dashed var(--borde);
       border-radius: 12px;
@@ -491,9 +506,19 @@
             <option value="Otros">Otros</option>
           </select>
         </label>
-        <label class="campo campo-editor">Foto
-          <input id="eFoto" type="text" maxlength="300" placeholder="fichero en fotos/ o URL (opcional)" />
-        </label>
+        <div class="campo campo-editor ancho-completo">Foto
+          <div class="foto-controles">
+            <div id="previewFoto" class="foto-marco foto-preview"><span class="sin-foto">Sin foto</span></div>
+            <div class="foto-campos">
+              <input id="eFoto" type="text" maxlength="300" placeholder="fotos/… o URL (o usa Subir foto)" />
+              <div class="foto-botones">
+                <button id="btnSubirFoto" class="boton" type="button">📷 Subir foto</button>
+                <button id="btnQuitarFoto" class="boton" type="button">Quitar foto</button>
+              </div>
+              <input id="inputFotoFichero" type="file" accept="image/*" hidden />
+            </div>
+          </div>
+        </div>
         <label class="campo campo-editor">Fecha último cambio
           <input id="eFechaUltimoCambio" type="date" />
         </label>
@@ -523,7 +548,7 @@
       <button id="btnCerrarSelector" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
     </div>
     <div class="cuerpo-dialogo">
-      <p class="nota-selector">Artículos del catálogo sin cantidad. Elige uno para reponerlo o crea uno desde cero.</p>
+      <p class="nota-selector">Artículos sin existencias (plantillas y "No queda nada"). Elige uno para reponerlo o crea uno desde cero.</p>
       <div id="listaPlantillas"></div>
       <div class="acciones-selector">
         <button id="btnDesdeCero" class="boton primario" type="button">＋ Crear desde cero</button>
@@ -540,7 +565,7 @@
       <p class="texto-eliminar">¿Qué quieres hacer con "<strong id="nombreEliminar"></strong>"?</p>
       <div class="opciones-eliminar">
         <button id="btnNoQuedaNada" class="boton" type="button">No queda nada
-          <span class="opcion-detalle">Se conserva en el CSV con cantidad 0 y sin ubicación ni caducidad.</span>
+          <span class="opcion-detalle">Se oculta del listado (cantidad 0, sin ubicación ni caducidad) y se propondrá al crear un artículo nuevo.</span>
         </button>
         <button id="btnEliminarDefinitivo" class="boton peligro" type="button">Eliminar completamente
           <span class="opcion-detalle">Borra la fila del CSV. No se puede deshacer.</span>
@@ -550,6 +575,6 @@
   </dialog>
 
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app_despensa.js?v=2026072404"></script>
+  <script src="app_despensa.js?v=2026072405"></script>
 </body>
 </html>

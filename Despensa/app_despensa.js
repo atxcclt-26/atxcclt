@@ -13,6 +13,16 @@
 // Todos los campos son editables desde la web (Historial es interno). La app
 // permite crear y eliminar artículos.
 //
+// Rev. 5 (2026-07-24):
+// - La foto se gestiona desde el editor (a diferencia de Tuppers): botón
+//   "Subir foto" (galería/cámara, redimensionado a máx. 1600 px JPEG antes
+//   de subir a "fotos/" vía Graph) y botón "Quitar foto". La subida se hace
+//   al Guardar; Cancelar no deja ficheros huérfanos. Al sustituir o quitar
+//   una foto propia (ruta relativa), el fichero antiguo se borra de OneDrive.
+// - Los artículos "No queda nada" (Cantidad 0) ya NO se muestran en la
+//   pantalla principal: se proponen en el selector de "Nuevo artículo"
+//   junto a las plantillas sin cantidad.
+//
 // Rev. 4 (2026-07-24):
 // - Foto como en Tuppers: columna Foto (nombre de fichero, ruta relativa o
 //   URL), miniatura en tarjeta vía Graph con caché y fallback a "fotos/",
@@ -187,10 +197,12 @@ function normalizarRutaFoto(ruta) {
 function esUrl(ruta) { return /^(https?:|data:|blob:)/i.test(String(ruta || "").trim()); }
 
 // Cantidad: "" = plantilla oculta del catálogo; "0" = agotado ("No queda
-// nada", visible como recordatorio); cualquier otro texto = en stock.
+// nada"); cualquier otro texto = en stock. En la pantalla principal solo se
+// muestran los que están en stock; vacíos y agotados se proponen al crear.
 function cantidadDe(registro) { return String(registro.cantidad || "").trim(); }
 function tieneCantidad(registro) { return cantidadDe(registro) !== ""; }
 function esAgotado(registro) { return cantidadDe(registro) === "0"; }
+function esVisibleEnListado(registro) { return tieneCantidad(registro) && !esAgotado(registro); }
 
 // Historial: JSON con los últimos MAX_HISTORIAL estados anteriores.
 function parsearHistorial(valor) {
@@ -380,6 +392,62 @@ async function resolverFoto(rutaOriginal) {
   })();
   G.fotoCache.set(ruta, promesa);
   return promesa;
+}
+// Subida de fotos (rev. 5). Redimensionado en cliente para no superar el
+// límite de 4 MB del PUT simple de Graph y ahorrar espacio.
+function sanitizarNombreFichero(valor) {
+  const limpio = quitarAcentos(String(valor || "")).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return limpio || "articulo";
+}
+function generarRutaFoto(nombreArticulo) {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  const marca = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  return `fotos/${sanitizarNombreFichero(nombreArticulo)}_${marca}.jpg`;
+}
+function redimensionarFoto(file, maxLado = 1600, calidad = 0.85) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const escala = Math.min(1, maxLado / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * escala));
+      const h = Math.max(1, Math.round(img.height * escala));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("No se pudo procesar la imagen.")), "image/jpeg", calidad);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("No se pudo leer la imagen seleccionada.")); };
+    img.src = url;
+  });
+}
+async function subirFotoOneDrive(ruta, blob) {
+  const path = encodeGraphPath(normalizarRutaFoto(ruta));
+  const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}:/content`, {
+    method: "PUT",
+    headers: { "Content-Type": "image/jpeg" },
+    body: blob
+  });
+  if (!res.ok) throw new Error(`No se pudo subir la foto (HTTP ${res.status}).`);
+  G.fotoCache.delete(normalizarRutaFoto(ruta));
+  return res.json();
+}
+// Borra el fichero de una foto propia (ruta relativa). Tolerante a fallos:
+// un fichero huérfano en fotos/ no rompe nada.
+async function borrarFotoOneDrive(ruta) {
+  const limpia = normalizarRutaFoto(ruta);
+  if (!limpia || esUrl(limpia)) return;
+  try {
+    const path = encodeGraphPath(limpia);
+    const res = await gFetch(`${itemBase()}/items/${G.folderId}:/${path}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) console.warn("No se pudo borrar la foto", limpia, res.status);
+  } catch (error) {
+    console.warn("No se pudo borrar la foto", limpia, error);
+  }
+  G.fotoCache.delete(limpia);
 }
 
 // ---------- Datos ----------
@@ -594,9 +662,8 @@ function claseTono(registro) {
   if (u === "armario" || u === "arriba") return "tono-claro";
   return "";
 }
-// Urgencia: gris agotado ("No queda nada"), rojo caducado, verde resto.
+// Urgencia: rojo caducado, verde resto.
 function claseUrgencia(registro, dias) {
-  if (esAgotado(registro)) return "agotado";
   if (dias != null && dias < 0) return "caducado";
   return "sin-urgencia";
 }
@@ -612,18 +679,11 @@ function badgeCaducidad(registro, dias) {
   return `<span class="badge">Caduca: ${escapeHtml(fecha)}</span>`;
 }
 function tarjetaHtml(registro, indice) {
-  const agotado = esAgotado(registro);
   const dias = diasHastaCaducidad(registro.fechaCaducidad);
   const clase = `${claseCasa(registro.casa)} ${claseTono(registro)} ${claseUrgencia(registro, dias)}`;
   const cortoPlazo = esSi(registro.cortoPlazo)
     ? `<span class="badge corto-plazo">⚠ Corto plazo abierto</span>`
     : "";
-  const badgeCantidad = agotado
-    ? `<span class="badge cantidad-cero">No queda nada</span>`
-    : `<span class="badge cantidad">Cantidad: ${escapeHtml(cantidadDe(registro))}</span>`;
-  const badgeUbicacion = agotado
-    ? ""
-    : `<span class="badge ubicacion">Ubicación: ${escapeHtml(valorVisible(registro.ubicacion))}</span>`;
   const foto = normalizarRutaFoto(registro.foto);
   const marcoFoto = foto
     ? `<div class="foto-marco" data-foto-marco="${indice}"><span class="cargando-foto">Cargando foto…</span></div>`
@@ -635,10 +695,10 @@ function tarjetaHtml(registro, indice) {
       <div class="vista-previa-articulo">
         <p class="nombre-principal">${escapeHtml(valorVisible(registro.nombre, "Artículo sin nombre"))}</p>
         <div class="badges">
-          ${badgeCantidad}
+          <span class="badge cantidad">Cantidad: ${escapeHtml(cantidadDe(registro))}</span>
           <span class="badge">Casa: ${escapeHtml(valorVisible(registro.casa))}</span>
-          ${badgeUbicacion}
-          ${agotado ? "" : badgeCaducidad(registro, dias)}
+          <span class="badge ubicacion">Ubicación: ${escapeHtml(valorVisible(registro.ubicacion))}</span>
+          ${badgeCaducidad(registro, dias)}
           ${cortoPlazo}
         </div>
         <button class="editar" type="button" data-editar="${indice}">Ver / editar</button>
@@ -646,11 +706,12 @@ function tarjetaHtml(registro, indice) {
     </article>`;
 }
 function render() {
-  // Solo se muestran los artículos con Cantidad informada; los de cantidad
-  // vacía son plantillas del catálogo y se proponen al crear uno nuevo.
+  // Pantalla principal: solo artículos en stock. Los de cantidad vacía
+  // (plantillas) y los "No queda nada" (cantidad 0) se proponen al pulsar
+  // "Nuevo artículo".
   const visibles = G.registros
     .map((registro, indice) => ({ registro, indice }))
-    .filter(({ registro }) => tieneCantidad(registro) && registroCoincide(registro))
+    .filter(({ registro }) => esVisibleEnListado(registro) && registroCoincide(registro))
     .sort((a, b) => compararRegistros(a.registro, b.registro));
 
   const lista = $("listaDespensa");
@@ -684,6 +745,50 @@ async function cargarFotosRenderizadas(visibles) {
 
 // ---------- Editor (crear / editar / eliminar) ----------
 // editorIndice = "" → alta de artículo nuevo; número → edición del registro.
+// Foto pendiente de subir (se sube al Guardar; Cancelar la descarta).
+let fotoSeleccionada = null;      // { file, ruta } o null
+let urlPreviewLocal = null;       // objectURL de la preview local
+let previewToken = 0;
+function liberarPreviewLocal() {
+  if (urlPreviewLocal) { URL.revokeObjectURL(urlPreviewLocal); urlPreviewLocal = null; }
+}
+async function actualizarPreviewFoto(valor) {
+  const marco = $("previewFoto");
+  const token = ++previewToken;
+  const ruta = normalizarRutaFoto(valor);
+  if (!ruta) { marco.innerHTML = `<span class="sin-foto">Sin foto</span>`; return; }
+  marco.innerHTML = `<span class="cargando-foto">Cargando…</span>`;
+  try {
+    const foto = await resolverFoto(ruta);
+    if (token !== previewToken) return;
+    marco.innerHTML = foto && foto.miniatura
+      ? `<img src="${escapeHtml(foto.miniatura)}" alt="Foto del artículo" />`
+      : `<span class="sin-foto">No encontrada</span>`;
+  } catch (error) {
+    if (token === previewToken) marco.innerHTML = `<span class="sin-foto">No se pudo cargar</span>`;
+  }
+}
+function mostrarPreviewLocal(file) {
+  liberarPreviewLocal();
+  previewToken++;
+  urlPreviewLocal = URL.createObjectURL(file);
+  $("previewFoto").innerHTML = `<img src="${urlPreviewLocal}" alt="Foto seleccionada" />`;
+}
+function seleccionarFoto(file) {
+  if (!file) return;
+  const ruta = generarRutaFoto($("eNombre").value || file.name.replace(/\.[^.]+$/, ""));
+  fotoSeleccionada = { file, ruta };
+  $("eFoto").value = ruta;
+  mostrarPreviewLocal(file);
+}
+function quitarFoto() {
+  fotoSeleccionada = null;
+  liberarPreviewLocal();
+  $("eFoto").value = "";
+  $("inputFotoFichero").value = "";
+  previewToken++;
+  $("previewFoto").innerHTML = `<span class="sin-foto">Sin foto</span>`;
+}
 function abrirEditor(indice) {
   const esNuevo = indice == null;
   const registro = esNuevo ? null : G.registros[indice];
@@ -708,6 +813,10 @@ function abrirEditor(indice) {
     ? ""
     : (CATEGORIAS.find(v => norm(v) === norm(registro.categoria)) || "");
   $("eFoto").value = esNuevo ? "" : (registro.foto || "");
+  fotoSeleccionada = null;
+  liberarPreviewLocal();
+  $("inputFotoFichero").value = "";
+  actualizarPreviewFoto($("eFoto").value);
   // Fecha último cambio: se propone SIEMPRE hoy; Cancelar no guarda nada,
   // así que la fecha anterior se conserva si no se confirma.
   $("eFechaUltimoCambio").value = hoyIso();
@@ -720,6 +829,8 @@ function abrirEditor(indice) {
   else dialogo.setAttribute("open", "");
 }
 function cerrarEditor() {
+  fotoSeleccionada = null;
+  liberarPreviewLocal();
   const dialogo = $("editor");
   if (typeof dialogo.close === "function") dialogo.close();
   else dialogo.removeAttribute("open");
@@ -787,6 +898,25 @@ async function guardarEditor(evento) {
     fechaUltimoCambio: $("eFechaUltimoCambio").value
   };
 
+  // Foto pendiente: solo se sube si el campo sigue apuntando a su ruta
+  // (si se ha editado o vaciado el campo después, se descarta).
+  const pendiente = fotoSeleccionada && fotoSeleccionada.ruta === nuevo.foto ? fotoSeleccionada : null;
+  if (pendiente) {
+    const botonGuardar = $("btnGuardarEditor");
+    if (botonGuardar) botonGuardar.disabled = true;
+    try {
+      setEstado("Subiendo foto…");
+      const blob = await redimensionarFoto(pendiente.file);
+      await subirFotoOneDrive(pendiente.ruta, blob);
+    } catch (error) {
+      setEstado(`Error subiendo la foto: ${error.message}`, true);
+      if (botonGuardar) botonGuardar.disabled = false;
+      return;
+    }
+    if (botonGuardar) botonGuardar.disabled = false;
+    fotoSeleccionada = null;
+  }
+
   if (esNuevo) {
     const registro = Object.assign({ _indiceOriginal: siguienteIndiceOriginal(), historial: serializarHistorial([]) }, nuevo);
     G.registros.push(registro);
@@ -825,6 +955,12 @@ async function guardarEditor(evento) {
   render();
   try {
     await guardarDatos();
+    // Si la foto propia anterior se ha sustituido o quitado, borrar el
+    // fichero antiguo de OneDrive (tolerante a fallos).
+    const fotoAntigua = normalizarRutaFoto(copiaAnterior.foto);
+    if (fotoAntigua && !esUrl(fotoAntigua) && fotoAntigua !== normalizarRutaFoto(nuevo.foto)) {
+      borrarFotoOneDrive(fotoAntigua);
+    }
     cerrarEditor();
   } catch (error) {
     Object.assign(registro, copiaAnterior);
@@ -891,6 +1027,8 @@ async function eliminarDefinitivo() {
   render();
   try {
     await guardarDatos();
+    const fotoPropia = normalizarRutaFoto(registro.foto);
+    if (fotoPropia && !esUrl(fotoPropia)) borrarFotoOneDrive(fotoPropia);
     cerrarDialogoEliminar();
     cerrarEditor();
     setEstado(`"${nombre}" eliminado completamente.`);
@@ -903,22 +1041,26 @@ async function eliminarDefinitivo() {
 }
 
 // ---------- Selector de artículo nuevo ----------
-// "Nuevo artículo" propone primero las plantillas del catálogo (registros
-// con Cantidad vacía), además de la opción de crear uno desde cero.
+// "Nuevo artículo" propone primero los artículos sin existencias: plantillas
+// (Cantidad vacía) y "No queda nada" (Cantidad 0), además de crear desde cero.
 function plantillasCatalogo() {
   return G.registros
     .map((registro, indice) => ({ registro, indice }))
-    .filter(({ registro }) => !tieneCantidad(registro))
+    .filter(({ registro }) => !esVisibleEnListado(registro))
     .sort((a, b) => collator.compare(a.registro.nombre || "", b.registro.nombre || ""));
 }
 function abrirSelectorNuevo() {
   const plantillas = plantillasCatalogo();
   if (!plantillas.length) { abrirEditor(null); return; }
-  $("listaPlantillas").innerHTML = plantillas.map(({ registro, indice }) => `
+  $("listaPlantillas").innerHTML = plantillas.map(({ registro, indice }) => {
+    const detalle = [registro.casa, registro.categoria].filter(Boolean).join(" · ") || "—";
+    const marca = esAgotado(registro) ? ` · <strong>No queda nada</strong>` : "";
+    return `
     <button type="button" class="plantilla" data-plantilla="${indice}">
       <span class="plantilla-nombre">${escapeHtml(valorVisible(registro.nombre, "Sin nombre"))}</span>
-      <span class="plantilla-detalle">${escapeHtml([registro.casa, registro.categoria].filter(Boolean).join(" · ") || "—")}</span>
-    </button>`).join("");
+      <span class="plantilla-detalle">${escapeHtml(detalle)}${marca}</span>
+    </button>`;
+  }).join("");
   const dialogo = $("selectorNuevo");
   if (typeof dialogo.showModal === "function") dialogo.showModal();
   else dialogo.setAttribute("open", "");
@@ -1078,6 +1220,23 @@ $("listaDespensa").addEventListener("click", event => {
   }
 });
 $("btnHistorial").addEventListener("click", alternarHistorial);
+
+// Gestión de foto en el editor.
+$("btnSubirFoto").addEventListener("click", () => $("inputFotoFichero").click());
+$("inputFotoFichero").addEventListener("change", event => {
+  const file = event.target.files && event.target.files[0];
+  if (file) seleccionarFoto(file);
+});
+$("btnQuitarFoto").addEventListener("click", quitarFoto);
+// Si se edita el campo a mano, se descarta la foto pendiente y se refresca
+// la preview con lo escrito.
+$("eFoto").addEventListener("change", () => {
+  if (fotoSeleccionada && fotoSeleccionada.ruta !== $("eFoto").value.trim()) {
+    fotoSeleccionada = null;
+    liberarPreviewLocal();
+  }
+  if (!fotoSeleccionada) actualizarPreviewFoto($("eFoto").value.trim());
+});
 
 // Selector de nuevo: elegir plantilla del catálogo o crear desde cero.
 $("listaPlantillas").addEventListener("click", event => {
