@@ -306,6 +306,55 @@
     }
     .foto-botones { display: flex; gap: 6px; flex-wrap: wrap; }
     .foto-botones .boton { padding: 7px 10px; font-size: .8rem; }
+
+    /* Edición libre */
+    .acciones-tarjeta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
+    .acciones-tarjeta .editar { margin-top: 0; }
+    .editar.libre { background: #fff; color: var(--secundario); border: 1px solid var(--secundario); }
+    #editorLibre { width: min(560px, calc(100% - 18px)); }
+    .libre-cuerpo { display: flex; flex-direction: column; gap: 10px; }
+    .chat-libre {
+      min-height: 160px;
+      max-height: 42dvh;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 9px;
+      border: 1px solid var(--borde);
+      border-radius: 10px;
+      background: #fcfbf8;
+    }
+    .chat-libre .msg {
+      max-width: 88%;
+      padding: 7px 10px;
+      border-radius: 11px;
+      font-size: .86rem;
+      line-height: 1.32;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+    .chat-libre .msg.app { align-self: flex-start; background: #fff; border: 1px solid var(--borde); }
+    .chat-libre .msg.usuario { align-self: flex-end; background: #dcebf9; border: 1px solid #b9d4ec; }
+    .pendientes-libre {
+      border: 1px solid #efd480;
+      background: #fff8e5;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: .8rem;
+    }
+    .pendientes-libre ul { margin: 5px 0 0; padding-left: 18px; }
+    .pendientes-libre li { margin: 2px 0; }
+    .fila-libre { display: flex; gap: 7px; }
+    .fila-libre input {
+      flex: 1;
+      min-width: 0;
+      min-height: 40px;
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      padding: 8px 10px;
+    }
+    .acciones-libre { display: flex; justify-content: space-between; gap: 8px; }
     .vacio-lista {
       border: 1px dashed var(--borde);
       border-radius: 12px;
@@ -574,7 +623,30 @@
     </div>
   </dialog>
 
+  <dialog id="editorLibre">
+    <div class="dialogo-cabecera">
+      <h2 id="tituloLibre">💬 Edición libre</h2>
+      <button id="btnCerrarLibre" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <div class="cuerpo-dialogo libre-cuerpo">
+      <div id="chatLibre" class="chat-libre" aria-live="polite"></div>
+      <div id="pendientesLibre" class="pendientes-libre" hidden>
+        <strong>Cambios pendientes</strong>
+        <ul id="listaPendientes"></ul>
+      </div>
+      <form id="formLibre" class="fila-libre">
+        <input id="inputLibre" type="text" autocomplete="off" enterkeyhint="send"
+               placeholder='"quita 100 gramos", "muévelo al frigo"…' />
+        <button class="boton primario" type="submit">Enviar</button>
+      </form>
+      <div class="acciones-libre">
+        <button id="btnCancelarLibre" class="boton" type="button">Cancelar</button>
+        <button id="btnGuardarLibre" class="boton primario" type="button" disabled>Guardar cambios</button>
+      </div>
+    </div>
+  </dialog>
+
   <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
-  <script src="app_despensa.js?v=2026072405"></script>
+  <script src="app_despensa.js?v=2026072406"></script>
 </body>
 </html>

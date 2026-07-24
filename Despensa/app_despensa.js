@@ -13,6 +13,17 @@
 // Todos los campos son editables desde la web (Historial es interno). La app
 // permite crear y eliminar artículos.
 //
+// Rev. 6 (2026-07-24):
+// - Edición libre conversacional (botón 💬 en cada tarjeta, junto al editor
+//   clásico): intérprete local de instrucciones en español (sin backend ni
+//   API externa). Entiende cantidad relativa/absoluta ("quita 100 gramos",
+//   "añade medio kilo", "deja 2 bricks"), movimientos ("muévelo al frigo"),
+//   casa, caducidad (fechas absolutas y relativas), corto plazo, categoría,
+//   renombrar y "se ha acabado". Cada instrucción se interpreta contra el
+//   estado proyectado (encadenable), la app confirma en el chat y pregunta
+//   "¿Algún otro cambio?"; "deshaz"/"no" revierte el último, "listo" o el
+//   botón Guardar aplica todo en un único guardado con historial.
+//
 // Rev. 5 (2026-07-24):
 // - La foto se gestiona desde el editor (a diferencia de Tuppers): botón
 //   "Subir foto" (galería/cámara, redimensionado a máx. 1600 px JPEG antes
@@ -701,7 +712,10 @@ function tarjetaHtml(registro, indice) {
           ${badgeCaducidad(registro, dias)}
           ${cortoPlazo}
         </div>
-        <button class="editar" type="button" data-editar="${indice}">Ver / editar</button>
+        <div class="acciones-tarjeta">
+          <button class="editar" type="button" data-editar="${indice}">Ver / editar</button>
+          <button class="editar libre" type="button" data-libre="${indice}">💬 Edición libre</button>
+        </div>
       </div>
     </article>`;
 }
@@ -1071,6 +1085,327 @@ function cerrarSelectorNuevo() {
   else dialogo.removeAttribute("open");
 }
 
+// ---------- Edición libre conversacional ----------
+// Intérprete local de instrucciones en español. Sin backend ni API externa:
+// el dominio es acotado (cantidad, ubicación, casa, caducidad, corto plazo,
+// categoría, nombre, "se ha acabado") y se resuelve con reglas.
+// Cada instrucción se interpreta contra el ESTADO PROYECTADO (registro +
+// cambios pendientes), de modo que "quita 100" dos veces encadena bien.
+
+let libreIndice = null;
+let cambiosLibre = [];   // [{ asignaciones: {campo: valor}, descripcion }]
+
+const UNIDADES = new Map([
+  ["g", "gr"], ["gr", "gr"], ["grs", "gr"], ["gramo", "gr"], ["gramos", "gr"],
+  ["kg", "kg"], ["kgs", "kg"], ["kilo", "kg"], ["kilos", "kg"],
+  ["mg", "mg"],
+  ["l", "l"], ["litro", "l"], ["litros", "l"],
+  ["ml", "ml"], ["cl", "cl"],
+  ["ud", "ud"], ["uds", "ud"], ["unidad", "ud"], ["unidades", "ud"]
+]);
+function canonUnidad(u) {
+  const n = norm(u);
+  return UNIDADES.get(n) || n;
+}
+// "300 gr", "2 bricks", "0,5 kg", "3" → { num, unidad } | null
+function parsearCantidadTexto(texto) {
+  const m = String(texto || "").trim().match(/^(-?\d+(?:[.,]\d+)?)\s*(.*)$/);
+  if (!m) return null;
+  return { num: parseFloat(m[1].replace(",", ".")), unidad: m[2].trim() };
+}
+function formatearNumero(n) {
+  const redondeado = Math.round(n * 100) / 100;
+  return String(redondeado).replace(".", ",");
+}
+function formatearCantidad(num, unidad) {
+  return unidad ? `${formatearNumero(num)} ${unidad}` : formatearNumero(num);
+}
+function unidadesCompatibles(a, b) {
+  if (!a || !b) return true; // sin unidad en la instrucción → asumir la actual
+  return canonUnidad(a) === canonUnidad(b);
+}
+// Fechas: "3/8", "03/08/2026", "2026-08-03", "en 2 semanas", "mañana"…
+function parsearFechaLibre(texto) {
+  const t = norm(texto);
+  const hoy = new Date();
+  const aIso = d => {
+    const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  let m = t.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = t.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?/);
+  if (m) {
+    let anio = m[3] ? Number(m[3].length === 2 ? "20" + m[3] : m[3]) : hoy.getFullYear();
+    let fecha = new Date(anio, Number(m[2]) - 1, Number(m[1]));
+    // Sin año explícito y ya pasada → se asume el año que viene.
+    if (!m[3] && fecha < new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())) {
+      fecha = new Date(anio + 1, Number(m[2]) - 1, Number(m[1]));
+    }
+    return aIso(fecha);
+  }
+  m = t.match(/en\s+(\d+)\s*(dia|dias|semana|semanas|mes|meses|ano|anos|anio|anios)/);
+  if (m) {
+    const n = Number(m[1]);
+    const fecha = new Date(hoy);
+    if (m[2].startsWith("dia")) fecha.setDate(fecha.getDate() + n);
+    else if (m[2].startsWith("semana")) fecha.setDate(fecha.getDate() + 7 * n);
+    else if (m[2].startsWith("mes")) fecha.setMonth(fecha.getMonth() + n);
+    else fecha.setFullYear(fecha.getFullYear() + n);
+    return aIso(fecha);
+  }
+  if (/pasado manana/.test(t)) { const f = new Date(hoy); f.setDate(f.getDate() + 2); return aIso(f); }
+  if (/manana/.test(t)) { const f = new Date(hoy); f.setDate(f.getDate() + 1); return aIso(f); }
+  if (/\bhoy\b/.test(t)) return aIso(hoy);
+  return null;
+}
+const SINONIMOS_UBICACION = new Map([
+  ["frigo", "Frigo"], ["frigorifico", "Frigo"], ["nevera", "Frigo"],
+  ["congelador", "Congelador"], ["freezer", "Congelador"],
+  ["armario", "Armario"], ["despensa", "Armario"],
+  ["arriba", "Arriba"]
+]);
+function buscarUbicacion(t) {
+  for (const [clave, valor] of SINONIMOS_UBICACION) {
+    if (new RegExp(`\\b${clave}\\b`).test(t)) return valor;
+  }
+  return null;
+}
+function buscarCasa(t) {
+  if (/\bcastefa\b/.test(t)) return "Castefa";
+  if (/\bcomarruga\b/.test(t)) return "Comarruga";
+  return null;
+}
+function buscarCategoria(t) {
+  if (/frutos?\s*secos?/.test(t)) return "Frutos secos";
+  if (/\bharinas?\b/.test(t)) return "Harinas";
+  if (/\bcesped\b/.test(t)) return "Cesped";
+  if (/\botros?\b/.test(t)) return "Otros";
+  return null;
+}
+// Estado proyectado: registro + cambios pendientes aplicados en orden.
+function estadoProyectado(registro) {
+  const proyectado = Object.assign({}, registro);
+  cambiosLibre.forEach(c => Object.assign(proyectado, c.asignaciones));
+  return proyectado;
+}
+// Interpreta UNA instrucción contra el estado proyectado.
+// Devuelve { asignaciones, respuesta } o { respuesta } (no entendida / aviso).
+function interpretarInstruccion(bruto, proyectado) {
+  const t = norm(bruto);
+  if (!t) return { respuesta: "No he entendido nada. ¿Puedes repetirlo?" };
+
+  // "Se ha acabado" / "no queda nada"
+  if (/(no queda nada|se (ha )?acabado|se acabo|esta acabado|terminado|agotado)/.test(t)) {
+    return {
+      asignaciones: { cantidad: "0", ubicacion: "", fechaCaducidad: "" },
+      respuesta: `Lo marco como "No queda nada" (desaparecerá del listado y quedará en el catálogo). ¿Algún otro cambio?`
+    };
+  }
+  // Corto plazo
+  if (/corto plazo/.test(t) || /(lo he abierto|esta abierto)/.test(t)) {
+    const quitar = /(quita|no|sin|desmarca|falso)/.test(t) && !/(lo he abierto|esta abierto)/.test(t);
+    const valor = quitar ? "No" : "Sí";
+    if (norm(proyectado.cortoPlazo) === norm(valor)) return { respuesta: `Ya estaba con corto plazo "${valor}". ¿Algún otro cambio?` };
+    return { asignaciones: { cortoPlazo: valor }, respuesta: `Marco corto plazo una vez abierto: ${valor}. ¿Algún otro cambio?` };
+  }
+  // Sin caducidad
+  if (/(sin caducidad|quita la caducidad|borra la caducidad)/.test(t)) {
+    return { asignaciones: { fechaCaducidad: "" }, respuesta: "Quito la fecha de caducidad. ¿Algún otro cambio?" };
+  }
+  // Caducidad (antes que cantidad: las fechas llevan números)
+  if (/(caduca|caducidad|vence|consumir antes)/.test(t)) {
+    const fecha = parsearFechaLibre(t);
+    if (!fecha) return { respuesta: `He entendido que quieres cambiar la caducidad pero no la fecha. Prueba "caduca el 3/8", "caducidad 2026-09-01" o "caduca en 2 semanas".` };
+    return { asignaciones: { fechaCaducidad: fecha }, respuesta: `Pongo la caducidad a ${fechaVisible(fecha)}. ¿Algún otro cambio?` };
+  }
+  // Renombrar
+  let m = bruto.match(/(?:renombra(?:lo)?|llamalo|llámalo|nombre)\s+(?:a\s+|como\s+)?["']?(.+?)["']?\s*$/i);
+  if (m) {
+    const nombre = m[1].trim();
+    return { asignaciones: { nombre }, respuesta: `Lo renombro a "${nombre}". ¿Algún otro cambio?` };
+  }
+  // Categoría explícita
+  if (/categoria/.test(t)) {
+    const cat = buscarCategoria(t);
+    if (!cat) return { respuesta: "¿A qué categoría? (Cesped, Frutos secos, Harinas u Otros)" };
+    return { asignaciones: { categoria: cat }, respuesta: `Categoría: ${cat}. ¿Algún otro cambio?` };
+  }
+  // Cantidad relativa: quitar / añadir
+  m = t.match(/(quita|resta|saca|gasta|he (?:usado|gastado|consumido))\s+(?:otros?\s+)?(medio|media|\d+(?:[.,]\d+)?)\s*([a-z]*)/);
+  const mAniadir = t.match(/(anade|añade|suma|pon(?:le)? otros?|he comprado|compra|mete)\s+(?:otros?\s+)?(medio|media|\d+(?:[.,]\d+)?)\s*([a-z]*)/);
+  if (m || mAniadir) {
+    const esResta = Boolean(m);
+    const mm = m || mAniadir;
+    const bruto2 = mm[2] === "medio" || mm[2] === "media" ? 0.5 : parseFloat(mm[2].replace(",", "."));
+    const unidadInstr = mm[3] && !["de", "del", "mas"].includes(mm[3]) ? mm[3] : "";
+    const actual = parsearCantidadTexto(proyectado.cantidad);
+    if (!actual || Number.isNaN(actual.num)) {
+      return { respuesta: `La cantidad actual es "${valorVisible(proyectado.cantidad)}" y no puedo hacer cuentas con ella. Dime la cantidad final, p. ej. "deja 200 gr".` };
+    }
+    if (!unidadesCompatibles(unidadInstr, actual.unidad)) {
+      return { respuesta: `La cantidad actual está en "${actual.unidad}" y me hablas de "${unidadInstr}". Dime la cantidad final, p. ej. "deja 200 ${actual.unidad}".` };
+    }
+    const delta = esResta ? -bruto2 : bruto2;
+    const nuevoNum = Math.max(0, actual.num + delta);
+    const nuevaCantidad = nuevoNum === 0 ? "0" : formatearCantidad(nuevoNum, actual.unidad);
+    const verbo = esResta ? "bajo" : "subo";
+    const extra = nuevoNum === 0 ? ` Se queda a 0: lo marco como "No queda nada".` : "";
+    const asignaciones = nuevoNum === 0
+      ? { cantidad: "0", ubicacion: "", fechaCaducidad: "" }
+      : { cantidad: nuevaCantidad };
+    return {
+      asignaciones,
+      respuesta: `De ${formatearCantidad(actual.num, actual.unidad)} ${verbo} a ${nuevoNum === 0 ? "0" : nuevaCantidad}.${extra} ¿Algún otro cambio?`
+    };
+  }
+  // Cantidad absoluta: "deja 200 gr", "quedan 2 bricks", "cantidad 1 kg", "pon 3"
+  m = bruto.match(/(?:deja|quedan?|cantidad|pon|hay)\s+(?:unos?\s+)?(\d+(?:[.,]\d+)?)\s*(.*)$/i);
+  if (m) {
+    const num = parseFloat(m[1].replace(",", "."));
+    const unidad = m[2].trim();
+    const nuevaCantidad = num === 0 ? "0" : (unidad ? `${formatearNumero(num)} ${unidad}` : formatearNumero(num));
+    const asignaciones = num === 0
+      ? { cantidad: "0", ubicacion: "", fechaCaducidad: "" }
+      : { cantidad: nuevaCantidad };
+    const extra = num === 0 ? ` Lo marco como "No queda nada".` : "";
+    return {
+      asignaciones,
+      respuesta: `Cantidad: de ${valorVisible(proyectado.cantidad)} a ${num === 0 ? "0" : nuevaCantidad}.${extra} ¿Algún otro cambio?`
+    };
+  }
+  // Casa (antes que ubicación por si menciona ambas: "a castefa, al frigo" llega partido)
+  const casa = buscarCasa(t);
+  if (casa && /(casa|lleva|mueve|esta en|ponlo|pasalo|a\b)/.test(t)) {
+    if (norm(proyectado.casa) === norm(casa)) return { respuesta: `Ya estaba en ${casa}. ¿Algún otro cambio?` };
+    return { asignaciones: { casa }, respuesta: `Lo paso de ${valorVisible(proyectado.casa)} a ${casa}. ¿Algún otro cambio?` };
+  }
+  // Ubicación
+  const ubicacion = buscarUbicacion(t);
+  if (ubicacion) {
+    if (norm(proyectado.ubicacion) === norm(ubicacion)) return { respuesta: `Ya estaba en ${ubicacion}. ¿Algún otro cambio?` };
+    return { asignaciones: { ubicacion }, respuesta: `Lo muevo de ${valorVisible(proyectado.ubicacion)} a ${ubicacion}. ¿Algún otro cambio?` };
+  }
+  if (casa) {
+    if (norm(proyectado.casa) === norm(casa)) return { respuesta: `Ya estaba en ${casa}. ¿Algún otro cambio?` };
+    return { asignaciones: { casa }, respuesta: `Lo paso de ${valorVisible(proyectado.casa)} a ${casa}. ¿Algún otro cambio?` };
+  }
+  // Categoría sin la palabra "categoría": "es harinas"
+  const cat2 = buscarCategoria(t);
+  if (cat2 && /\b(es|pon|marca)\b/.test(t)) {
+    return { asignaciones: { categoria: cat2 }, respuesta: `Categoría: ${cat2}. ¿Algún otro cambio?` };
+  }
+  return { respuesta: `No lo he entendido. Puedo con cosas como: "quita 100 gramos", "añade medio kilo", "deja 2 bricks", "muévelo al frigo", "llévalo a Comarruga", "caduca el 3/8", "corto plazo sí", "categoría harinas", "renómbralo a X" o "se ha acabado".` };
+}
+
+// --- UI del diálogo de edición libre ---
+function agregarMensajeLibre(quien, texto) {
+  const chat = $("chatLibre");
+  const div = document.createElement("div");
+  div.className = `msg ${quien}`;
+  div.textContent = texto;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+function refrescarPendientesLibre() {
+  const panel = $("pendientesLibre");
+  const lista = $("listaPendientes");
+  const boton = $("btnGuardarLibre");
+  if (!cambiosLibre.length) {
+    panel.hidden = true;
+    lista.innerHTML = "";
+    boton.disabled = true;
+    boton.textContent = "Guardar cambios";
+    return;
+  }
+  panel.hidden = false;
+  lista.innerHTML = cambiosLibre.map(c => `<li>${escapeHtml(c.descripcion)}</li>`).join("");
+  boton.disabled = false;
+  boton.textContent = `Guardar cambios (${cambiosLibre.length})`;
+}
+function abrirEditorLibre(indice) {
+  const registro = G.registros[indice];
+  if (!registro) return;
+  libreIndice = indice;
+  cambiosLibre = [];
+  $("tituloLibre").textContent = `💬 ${valorVisible(registro.nombre, "Artículo")}`;
+  $("chatLibre").innerHTML = "";
+  $("inputLibre").value = "";
+  refrescarPendientesLibre();
+  agregarMensajeLibre("app",
+    `${valorVisible(registro.nombre)}: ${valorVisible(registro.cantidad)} en ${valorVisible(registro.ubicacion)} (${valorVisible(registro.casa)})` +
+    (fechaParaInput(registro.fechaCaducidad) ? `, caduca ${fechaVisible(registro.fechaCaducidad)}` : "") +
+    `. Dime qué cambio, p. ej. "quita 100 gramos".`);
+  const dialogo = $("editorLibre");
+  if (typeof dialogo.showModal === "function") dialogo.showModal();
+  else dialogo.setAttribute("open", "");
+  $("inputLibre").focus();
+}
+function cerrarEditorLibre() {
+  libreIndice = null;
+  cambiosLibre = [];
+  const dialogo = $("editorLibre");
+  if (typeof dialogo.close === "function") dialogo.close();
+  else dialogo.removeAttribute("open");
+}
+function procesarEntradaLibre(texto) {
+  const registro = G.registros[libreIndice];
+  if (!registro) return;
+  const t = norm(texto);
+  // Órdenes de control del diálogo
+  if (/^(no|deshaz|deshacer|quita eso|anula)\b/.test(t) && !/queda nada/.test(t)) {
+    if (!cambiosLibre.length) { agregarMensajeLibre("app", "No hay nada que deshacer. ¿Algún cambio?"); return; }
+    const quitado = cambiosLibre.pop();
+    refrescarPendientesLibre();
+    agregarMensajeLibre("app", `Deshecho: ${quitado.descripcion}. ¿Algún otro cambio?`);
+    return;
+  }
+  if (/^(si|vale|ok|okey|correcto|perfecto|eso es)\b/.test(t)) {
+    agregarMensajeLibre("app", cambiosLibre.length ? `De acuerdo. ¿Algún otro cambio? (o di "listo" para guardar)` : "¿Qué cambio quieres hacer?");
+    return;
+  }
+  if (/^(listo|guardar|guarda|ya( esta)?|nada mas|ninguno|fin|hecho)\b/.test(t)) {
+    guardarEdicionLibre();
+    return;
+  }
+  // Instrucciones (admite varias separadas por " y " o comas)
+  const fragmentos = texto.split(/\s+y\s+|,\s*/).map(f => f.trim()).filter(Boolean);
+  for (const fragmento of fragmentos) {
+    const proyectado = estadoProyectado(registro);
+    const resultado = interpretarInstruccion(fragmento, proyectado);
+    if (resultado.asignaciones) {
+      cambiosLibre.push({ asignaciones: resultado.asignaciones, descripcion: resultado.respuesta.replace(/ ¿Algún otro cambio\?$/, "") });
+      refrescarPendientesLibre();
+    }
+    agregarMensajeLibre("app", resultado.respuesta);
+  }
+}
+async function guardarEdicionLibre() {
+  const registro = G.registros[libreIndice];
+  if (!registro) return;
+  if (!cambiosLibre.length) { agregarMensajeLibre("app", "No hay cambios pendientes que guardar."); return; }
+  const copiaAnterior = Object.assign({}, registro);
+  const boton = $("btnGuardarLibre");
+  boton.disabled = true;
+  apilarHistorial(registro);
+  const proyectado = estadoProyectado(registro);
+  CAMPOS_HISTORIAL.concat(["nombre"]).forEach(key => { registro[key] = proyectado[key]; });
+  registro.fechaUltimoCambio = hoyIso();
+  poblarFiltros();
+  render();
+  try {
+    await guardarDatos();
+    agregarMensajeLibre("app", "Cambios guardados. ✅");
+    cerrarEditorLibre();
+  } catch (error) {
+    Object.assign(registro, copiaAnterior);
+    poblarFiltros();
+    render();
+    boton.disabled = false;
+    agregarMensajeLibre("app", `Error guardando: ${error.message}. Los cambios siguen pendientes.`);
+  }
+}
+
 // ---------- Autenticación e inicio ----------
 async function iniciar() {
   if (inicializado) return;
@@ -1212,12 +1547,31 @@ $("btnRecargar").addEventListener("click", () => cargarDatos().catch(error => se
 $("listaDespensa").addEventListener("click", event => {
   const editar = event.target.closest("[data-editar]");
   if (editar) { abrirEditor(Number(editar.dataset.editar)); return; }
+  const libre = event.target.closest("[data-libre]");
+  if (libre) { abrirEditorLibre(Number(libre.dataset.libre)); return; }
   const abrirFoto = event.target.closest("[data-abrir-foto]");
   if (abrirFoto) {
     const marco = abrirFoto.closest(".foto-marco");
     const url = marco && marco.dataset.urlCompleta;
     if (url) window.open(url, "_blank", "noopener");
   }
+});
+
+// Diálogo de edición libre.
+$("formLibre").addEventListener("submit", event => {
+  event.preventDefault();
+  const texto = $("inputLibre").value.trim();
+  if (!texto) return;
+  agregarMensajeLibre("usuario", texto);
+  $("inputLibre").value = "";
+  procesarEntradaLibre(texto);
+  $("inputLibre").focus();
+});
+$("btnGuardarLibre").addEventListener("click", guardarEdicionLibre);
+$("btnCancelarLibre").addEventListener("click", cerrarEditorLibre);
+$("btnCerrarLibre").addEventListener("click", cerrarEditorLibre);
+$("editorLibre").addEventListener("click", event => {
+  if (event.target === $("editorLibre")) cerrarEditorLibre();
 });
 $("btnHistorial").addEventListener("click", alternarHistorial);
 
