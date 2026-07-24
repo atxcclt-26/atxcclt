@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Gestión de despensa</title>
+
+  <link rel="manifest" href="manifest_despensa.json" />
+  <meta name="theme-color" content="#8a5a17" />
+  <link rel="apple-touch-icon" href="icon-180_despensa.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32_despensa.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512_despensa.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Despensa" />
+
+  <style>
+    :root {
+      color-scheme: light;
+      --fondo: #faf6ef;
+      --panel: #ffffff;
+      --texto: #201b14;
+      --suave: #70685c;
+      --borde: #e2dacc;
+      --primario: #8a5a17;
+      --primario-oscuro: #6a440f;
+      --secundario: #315f86;
+      --aviso: #a25900;
+      --error: #b42318;
+      --sombra: 0 8px 24px rgba(32, 27, 20, .08);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--fondo);
+      color: var(--texto);
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .55; }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px max(16px, env(safe-area-inset-left)) 14px max(16px, env(safe-area-inset-right));
+      background: rgba(255,255,255,.96);
+      border-bottom: 1px solid var(--borde);
+      backdrop-filter: blur(10px);
+    }
+    header h1 { margin: 0; font-size: 1.35rem; }
+    header .subtitulo { margin: 3px 0 0; color: var(--suave); font-size: .78rem; }
+    #loginBtn {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+
+    main {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 16px max(14px, env(safe-area-inset-left)) 40px max(14px, env(safe-area-inset-right));
+    }
+    #estado-carga { min-height: 1.35rem; margin: 4px 0 14px; color: var(--suave); }
+    #estado-carga.error { color: var(--error); font-weight: 700; }
+    .vista { display: none; }
+    body.logged-in .vista.activa { display: block; }
+
+    .barra-principal {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .barra-principal h2 { margin: 0; font-size: 1.15rem; }
+    .acciones { display: flex; gap: 8px; flex-wrap: wrap; }
+    .boton {
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--texto);
+      padding: 9px 12px;
+      font-weight: 700;
+    }
+    .boton.primario { border-color: var(--primario); background: var(--primario); color: #fff; }
+    .boton.primario:hover { background: var(--primario-oscuro); }
+    .boton.peligro { border-color: var(--error); background: #fff; color: var(--error); }
+    .boton.peligro:hover { background: #fdecea; }
+
+    /* Botones de filtro rápido (grupo casa + grupo categoría) */
+    .filtros-rapidos { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+    .boton-rapido { border-width: 2px; }
+    .boton-rapido.castefa.activo { background: #dcebf9; border-color: #315f86; color: #1e3d58; }
+    .boton-rapido.comarruga.activo { background: #ddf1e2; border-color: #256d4a; color: #185137; }
+    .boton-rapido.categoria.activo { background: #f6e7cc; border-color: #8a5a17; color: #6a440f; }
+
+    /* Panel de filtros (encima del listado, plegado por defecto) */
+    #btnFiltros { margin: 0 0 12px; }
+    .filtros-panel {
+      margin: 0 0 16px;
+      border: 1px solid var(--borde);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--sombra);
+      padding: 15px;
+    }
+    .rejilla-filtros {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    label.campo, .campo { display: flex; flex-direction: column; gap: 5px; font-size: .8rem; font-weight: 700; }
+    label.campo input, label.campo select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 8px 10px;
+      font-weight: 400;
+    }
+    .filtros-acciones { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* Combos de multiselección */
+    .ms { position: relative; }
+    .ms-boton {
+      width: 100%;
+      min-height: 40px;
+      text-align: left;
+      border: 1px solid var(--borde);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--texto);
+      padding: 8px 26px 8px 10px;
+      font-weight: 400;
+      position: relative;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ms-boton::after {
+      content: "▾";
+      position: absolute;
+      right: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--suave);
+    }
+    .ms-boton.con-seleccion { border-color: var(--primario); background: #faf3e6; font-weight: 700; }
+    .ms-panel {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      max-height: 230px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      box-shadow: var(--sombra);
+      padding: 5px;
+    }
+    .ms-panel label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 8px;
+      border-radius: 7px;
+      font-weight: 400;
+      font-size: .82rem;
+      cursor: pointer;
+      overflow-wrap: anywhere;
+    }
+    .ms-panel label:hover { background: #f7f3ea; }
+    .ms-panel input[type=checkbox] { width: 16px; height: 16px; flex: none; }
+    .ms-vacia { margin: 4px; color: var(--suave); font-size: .78rem; font-weight: 400; }
+
+    #listaDespensa { display: flex; flex-direction: column; gap: 10px; }
+    .articulo {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--borde);
+      border-radius: 14px;
+      background: var(--panel);
+      padding: 10px 12px;
+      box-shadow: var(--sombra);
+    }
+    /* Matiz de fondo por casa + tono por ubicación:
+       oscuro = congelador, medio = frigo, claro = armario/arriba */
+    .articulo.casa-castefa.tono-oscuro   { background: #c9def4; }
+    .articulo.casa-castefa.tono-medio    { background: #dcebf9; }
+    .articulo.casa-castefa.tono-claro    { background: #eef5fc; }
+    .articulo.casa-comarruga.tono-oscuro { background: #c9e9d1; }
+    .articulo.casa-comarruga.tono-medio  { background: #ddf1e2; }
+    .articulo.casa-comarruga.tono-claro  { background: #f0f9f3; }
+    /* Borde izquierdo por estado: rojo caducado, gris agotado, verde resto */
+    .articulo.caducado     { border-left: 6px solid var(--error); }
+    .articulo.sin-urgencia { border-left: 6px solid #4b9b69; }
+    .articulo.agotado      { border-left: 6px solid #9aa19c; opacity: .72; }
+
+    .vista-previa-articulo { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+    .nombre-principal {
+      margin: 0 0 4px;
+      font-weight: 800;
+      font-size: clamp(1.15rem, 3.4vw, 1.5rem);
+      line-height: 1.08;
+      overflow-wrap: anywhere;
+    }
+    .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 0; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 25px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #f0ece2;
+      color: #43392a;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+    .badge.ubicacion { background: #eaf2f9; color: #264f70; }
+    .badge.cantidad { background: #e8f1ea; color: #185137; }
+    .badge.cantidad-cero { background: #ececec; color: #55524c; }
+    .badge.caducidad-caducado { background: #fdecea; color: var(--error); }
+    .badge.corto-plazo { background: #f6e7cc; color: #6a440f; }
+    .editar {
+      border: 0;
+      border-radius: 8px;
+      background: var(--secundario);
+      color: #fff;
+      padding: 8px 10px;
+      font-weight: 700;
+      font-size: .82rem;
+      white-space: nowrap;
+    }
+    .vacio-lista {
+      border: 1px dashed var(--borde);
+      border-radius: 12px;
+      padding: 28px;
+      color: var(--suave);
+      background: #fff;
+      text-align: center;
+    }
+
+    dialog {
+      width: min(640px, calc(100% - 18px));
+      max-height: min(96dvh, 900px);
+      border: 0;
+      border-radius: 14px;
+      padding: 0;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+    dialog::backdrop { background: rgba(30, 24, 14, .58); }
+    .dialogo-cabecera {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--borde);
+      background: #fff;
+    }
+    .dialogo-cabecera h2 { margin: 0; font-size: 1.08rem; }
+    .cerrar-dialogo { border: 0; background: transparent; font-size: 1.45rem; line-height: 1; }
+    #formEditor { padding: 10px 12px 0; overflow: auto; }
+    .rejilla-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .campo-editor {
+      padding: 7px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+    }
+    .campo-destacado { background: #fff2cc; border-color: #efd480; }
+    #formEditor label.campo { font-size: .72rem; gap: 3px; }
+    #formEditor label.campo input, #formEditor label.campo select {
+      min-height: 37px;
+      padding: 7px 8px;
+    }
+    .ancho-completo { grid-column: 1 / -1; }
+    .dialogo-acciones {
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 10px -12px 0;
+      padding: 9px 12px max(9px, env(safe-area-inset-bottom));
+      border-top: 1px solid var(--borde);
+      background: rgba(255,255,255,.97);
+    }
+    .dialogo-acciones .grupo-derecha { display: flex; gap: 8px; margin-left: auto; }
+
+    /* Selector de artículo nuevo (plantillas con cantidad vacía) */
+    .cuerpo-dialogo { padding: 12px; }
+    .nota-selector { margin: 0 0 10px; color: var(--suave); font-size: .8rem; }
+    #listaPlantillas { display: flex; flex-direction: column; gap: 6px; max-height: 46dvh; overflow: auto; }
+    .plantilla {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--borde);
+      border-radius: 9px;
+      background: #fff;
+      padding: 9px 11px;
+    }
+    .plantilla:hover { background: #faf3e6; border-color: var(--primario); }
+    .plantilla-nombre { font-weight: 700; overflow-wrap: anywhere; }
+    .plantilla-detalle { color: var(--suave); font-size: .74rem; white-space: nowrap; }
+    .acciones-selector { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+    /* Diálogo de eliminación con dos opciones */
+    #dialogoEliminar { width: min(460px, calc(100% - 18px)); }
+    .texto-eliminar { margin: 0 0 12px; font-size: .92rem; }
+    .opciones-eliminar { display: flex; flex-direction: column; gap: 8px; }
+    .opciones-eliminar .boton { text-align: left; }
+    .opcion-detalle { display: block; font-weight: 400; font-size: .74rem; color: var(--suave); margin-top: 2px; }
+    .boton.peligro .opcion-detalle { color: #c25a51; }
+
+    @media (max-width: 720px) {
+      main { padding-top: 10px; }
+      .boton-rapido { padding: 7px 9px; font-size: .8rem; }
+      .filtros-panel { padding: 10px; }
+      .articulo { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 9px; }
+      .editar { justify-self: start; }
+      .nombre-principal { font-size: 1.12rem; }
+      .badges { gap: 4px; }
+      .badge { font-size: .66rem; min-height: 23px; padding: 3px 6px; }
+      dialog { width: calc(100% - 8px); max-height: 98dvh; border-radius: 11px; }
+      .dialogo-cabecera { padding: 9px 11px; }
+      #formEditor { padding: 8px 8px 0; }
+      .rejilla-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+      .campo-editor { padding: 5px; }
+      #formEditor label.campo input, #formEditor label.campo select { min-height: 35px; padding: 6px; }
+      .dialogo-acciones { margin-left: -8px; margin-right: -8px; padding-left: 8px; padding-right: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Gestión de despensa</h1>
+      <p class="subtitulo">Artículos, casa, ubicación y caducidad</p>
+    </div>
+    <button id="loginBtn" type="button">Iniciar sesión</button>
+  </header>
+
+  <main>
+    <p id="estado-carga">Inicia sesión para empezar.</p>
+
+    <section id="inventario" class="vista">
+      <div class="barra-principal">
+        <h2>Contenido de la despensa</h2>
+        <div class="acciones">
+          <button id="btnNuevo" class="boton primario" type="button">＋ Nuevo artículo</button>
+          <button id="btnRecargar" class="boton" type="button">↻ Recargar</button>
+        </div>
+      </div>
+
+      <div class="filtros-rapidos" role="group" aria-label="Filtros rápidos">
+        <button id="btnCasaCastefa" class="boton boton-rapido castefa" type="button" aria-pressed="false">Castefa</button>
+        <button id="btnCasaComarruga" class="boton boton-rapido comarruga" type="button" aria-pressed="false">Comarruga</button>
+        <button id="btnCatCesped" class="boton boton-rapido categoria" type="button" aria-pressed="false">Cesped</button>
+        <button id="btnCatFrutosSecos" class="boton boton-rapido categoria" type="button" aria-pressed="false">Frutos secos</button>
+        <button id="btnCatHarinas" class="boton boton-rapido categoria" type="button" aria-pressed="false">Harinas</button>
+        <button id="btnCatOtros" class="boton boton-rapido categoria" type="button" aria-pressed="false">Otros</button>
+      </div>
+
+      <button id="btnFiltros" class="boton" type="button" aria-expanded="false" aria-controls="panelFiltros">Mostrar filtros</button>
+
+      <div id="panelFiltros" class="filtros-panel" hidden>
+        <div id="rejillaFiltros" class="rejilla-filtros"></div>
+        <div class="filtros-acciones">
+          <button id="btnLimpiar" class="boton" type="button">Limpiar filtros</button>
+        </div>
+      </div>
+
+      <div id="listaDespensa" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="editor">
+    <div class="dialogo-cabecera">
+      <h2 id="tituloEditor">Artículo</h2>
+      <button id="btnCerrarEditor" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <form id="formEditor" method="dialog">
+      <input id="editorIndice" type="hidden" />
+
+      <div class="rejilla-editor">
+        <label class="campo campo-editor campo-destacado ancho-completo">Nombre
+          <input id="eNombre" type="text" maxlength="200" required />
+        </label>
+        <label class="campo campo-editor campo-destacado">Cantidad
+          <input id="eCantidad" type="text" maxlength="60" placeholder="p. ej. 30 gr (vacía = oculto)" />
+        </label>
+        <label class="campo campo-editor">Casa
+          <select id="eCasa" required>
+            <option value="Comarruga">Comarruga</option>
+            <option value="Castefa">Castefa</option>
+          </select>
+        </label>
+        <label class="campo campo-editor campo-destacado">Ubicación
+          <select id="eUbicacion" required>
+            <option value="">Selecciona</option>
+            <option value="Frigo">Frigo</option>
+            <option value="Congelador">Congelador</option>
+            <option value="Armario">Armario</option>
+            <option value="Arriba">Arriba</option>
+          </select>
+        </label>
+        <label class="campo campo-editor">Fecha caducidad
+          <input id="eFechaCaducidad" type="date" />
+        </label>
+        <label class="campo campo-editor">Corto plazo una vez abierto
+          <select id="eCortoPlazo" required>
+            <option value="No">No</option>
+            <option value="Sí">Sí</option>
+          </select>
+        </label>
+        <label class="campo campo-editor campo-destacado">Categoría
+          <select id="eCategoria" required>
+            <option value="">Selecciona</option>
+            <option value="Cesped">Cesped</option>
+            <option value="Frutos secos">Frutos secos</option>
+            <option value="Harinas">Harinas</option>
+            <option value="Otros">Otros</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="dialogo-acciones">
+        <button id="btnEliminarEditor" class="boton peligro" type="button">Eliminar</button>
+        <div class="grupo-derecha">
+          <button id="btnCancelarEditor" class="boton" type="button">Cancelar</button>
+          <button id="btnGuardarEditor" class="boton primario" type="submit">Guardar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="selectorNuevo">
+    <div class="dialogo-cabecera">
+      <h2>Nuevo artículo</h2>
+      <button id="btnCerrarSelector" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <div class="cuerpo-dialogo">
+      <p class="nota-selector">Artículos del catálogo sin cantidad. Elige uno para reponerlo o crea uno desde cero.</p>
+      <div id="listaPlantillas"></div>
+      <div class="acciones-selector">
+        <button id="btnDesdeCero" class="boton primario" type="button">＋ Crear desde cero</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="dialogoEliminar">
+    <div class="dialogo-cabecera">
+      <h2>Eliminar artículo</h2>
+      <button id="btnCancelarEliminar" class="cerrar-dialogo" type="button" aria-label="Cerrar">×</button>
+    </div>
+    <div class="cuerpo-dialogo">
+      <p class="texto-eliminar">¿Qué quieres hacer con "<strong id="nombreEliminar"></strong>"?</p>
+      <div class="opciones-eliminar">
+        <button id="btnNoQuedaNada" class="boton" type="button">No queda nada
+          <span class="opcion-detalle">Se conserva en el CSV con cantidad 0 y sin ubicación ni caducidad.</span>
+        </button>
+        <button id="btnEliminarDefinitivo" class="boton peligro" type="button">Eliminar completamente
+          <span class="opcion-detalle">Borra la fila del CSV. No se puede deshacer.</span>
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="https://alcdn.msauth.net/browser/2.37.0/js/msal-browser.min.js"></script>
+  <script src="app_despensa.js?v=2026072403"></script>
+</body>
+</html>

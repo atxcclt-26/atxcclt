@@ -1,0 +1,13 @@
+{
+  "name": "Gestión de despensa",
+  "short_name": "Despensa",
+  "start_url": "./index_despensa.html",
+  "display": "standalone",
+  "background_color": "#faf6ef",
+  "theme_color": "#8a5a17",
+  "lang": "es",
+  "icons": [
+    { "src": "icon-180_despensa.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512_despensa.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
